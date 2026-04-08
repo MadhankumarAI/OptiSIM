@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OptiSim - Eye Surgery Simulation</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading-screen">
+        <div class="loader-content">
+            <div class="eye-loader">
+                <div class="eye-loader-ring"></div>
+                <div class="eye-loader-iris"></div>
+                <div class="eye-loader-pupil"></div>
+            </div>
+            <h1>OptiSim</h1>
+            <p>Cataract Surgery Simulator</p>
+            <div class="loading-bar">
+                <div class="loading-bar-fill"></div>
+            </div>
+            <span class="loading-text">Initializing 3D environment...</span>
+        </div>
+    </div>
+
+    <!-- Landing / Intro Screen -->
+    <div id="intro-screen" class="hidden">
+        <div class="intro-overlay"></div>
+        <div class="intro-content">
+            <div class="intro-badge">WebXR Medical Simulation</div>
+            <h1>OptiSim</h1>
+            <h2>Cataract Surgery Training Simulator</h2>
+            <p>An interactive 3D walkthrough of phacoemulsification cataract surgery.
+               Learn each step, understand the risks, and see what can go wrong.</p>
+            <div class="intro-features">
+                <div class="feature-card">
+                    <i class="fas fa-eye"></i>
+                    <h3>6 Surgical Steps</h3>
+                    <p>Complete cataract surgery procedure</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <h3>12+ Complications</h3>
+                    <p>Learn what can go wrong at each step</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-vr-cardboard"></i>
+                    <h3>VR Ready</h3>
+                    <p>Works with any WebXR headset</p>
+                </div>
+            </div>
+            <div class="intro-buttons">
+                <button id="btn-start" class="btn-primary">
+                    <i class="fas fa-play"></i> Begin Simulation
+                </button>
+                <a href="ar.html" class="btn-secondary" style="text-decoration:none;">
+                    <i class="fas fa-mobile-alt"></i> AR Mode
+                </a>
+                <button id="btn-vr" class="btn-secondary" style="display:none;">
+                    <i class="fas fa-vr-cardboard"></i> Enter VR Mode
+                </button>
+            </div>
+            <div class="intro-footer">
+                <span><i class="fas fa-mouse"></i> Click & drag to rotate</span>
+                <span><i class="fas fa-search-plus"></i> Scroll to zoom</span>
+                <span><i class="fas fa-hand-pointer"></i> Click steps to navigate</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Simulation UI -->
+    <div id="simulation-ui" class="hidden">
+        <!-- Top Bar -->
+        <div class="top-bar">
+            <div class="top-bar-left">
+                <div class="logo-small">
+                    <i class="fas fa-eye"></i> OptiSim
+                </div>
+                <div class="surgery-title">Phacoemulsification Cataract Surgery</div>
+            </div>
+            <div class="top-bar-right">
+                <button id="btn-toggle-complications" class="btn-icon" title="Toggle Complications View">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </button>
+                <button id="btn-toggle-labels" class="btn-icon active" title="Toggle Labels">
+                    <i class="fas fa-tags"></i>
+                </button>
+                <button id="btn-reset-view" class="btn-icon" title="Reset Camera">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+                <a href="ar.html" class="btn-icon" title="AR Mode" style="text-decoration:none;">
+                    <i class="fas fa-mobile-alt"></i>
+                </a>
+                <button id="btn-enter-vr" class="btn-icon" title="Enter VR" style="display:none;">
+                    <i class="fas fa-vr-cardboard"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Step Navigation (Left Panel) -->
+        <div class="side-panel left-panel">
+            <div class="panel-header">
+                <h3><i class="fas fa-list-ol"></i> Surgical Steps</h3>
+            </div>
+            <div class="steps-list" id="steps-list">
+                <!-- Steps populated by JS -->
+            </div>
+            <div class="step-nav-buttons">
+                <button id="btn-prev" class="btn-nav" disabled>
+                    <i class="fas fa-chevron-left"></i> Previous
+                </button>
+                <button id="btn-next" class="btn-nav">
+                    Next <i class="fas fa-chevron-right"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Info Panel (Right Panel) -->
+        <div class="side-panel right-panel" id="right-panel">
+            <div class="panel-header">
+                <h3><i class="fas fa-info-circle"></i> Step Details</h3>
+            </div>
+            <div id="step-detail-content">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Sub-Step Timeline (Center Bottom) -->
+        <div class="substep-panel" id="substep-panel">
+            <div class="substep-controls">
+                <button id="btn-sub-prev" class="btn-sub" disabled title="Previous action (Left Arrow)">
+                    <i class="fas fa-step-backward"></i>
+                </button>
+                <button id="btn-sub-replay" class="btn-sub" title="Replay (R)">
+                    <i class="fas fa-redo"></i>
+                </button>
+                <button id="btn-sub-next" class="btn-sub" title="Next action (Right Arrow / Space)">
+                    <i class="fas fa-step-forward"></i>
+                </button>
+            </div>
+            <div class="substep-timeline-track" id="substep-timeline">
+                <!-- Populated by JS -->
+            </div>
+            <div class="substep-info-box" id="substep-info">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Complications Panel (Overlay) -->
+        <div class="complications-panel hidden" id="complications-panel">
+            <div class="panel-header">
+                <h3><i class="fas fa-exclamation-triangle"></i> Possible Complications</h3>
+                <button id="btn-close-complications" class="btn-close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div id="complications-content">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="progress-bar-container">
+            <div class="progress-bar" id="progress-bar"></div>
+            <div class="progress-steps" id="progress-steps">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 3D Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <!-- Three.js + Addons -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+
+    <!-- App Scripts -->
+    <script src="js/surgery-data.js"></script>
+    <script src="js/eye-model.js"></script>
+    <script src="js/surgical-tools.js"></script>
+    <script src="js/animations.js"></script>
+    <script src="js/draggable-cards.js"></script>
+    <script src="js/ui-controller.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
