@@ -1,8 +1,6 @@
 /* ============================================
    Main Entry Point - OptiSim
-   Initializes Three.js scene, loads eye model,
-   creates surgical tools, wires up interactive
-   sub-step surgery simulation.
+   Cinematic surgical simulation.
    ============================================ */
 
 (function () {
@@ -10,49 +8,74 @@
 
     let scene, camera, renderer, controls, composer;
     let eyeModel, surgicalTools, animations, ui, dragCards;
+    let operatingRoom, audioSystem, envMap;
     let clock = new THREE.Clock();
     let raycaster = new THREE.Raycaster();
     let mouse = new THREE.Vector2();
     let hoveredMesh = null;
     let tooltipEl = null;
+    let isPaused = false;
 
     async function init() {
         ui = new UIController();
         ui.updateLoading(5, 'Setting up 3D scene...');
 
         setupScene();
-        setupLighting();
+        setupCinematicLighting();
+
+        ui.updateLoading(10, 'Building operating room...');
+        operatingRoom = new OperatingRoom(scene);
+
         setupPostProcessing();
         setupTooltip();
 
         ui.updateLoading(15, 'Loading eye model...');
 
-        // Load 3D eye model (GLTF or procedural)
+        // Load 3D eye model
         eyeModel = new EyeModel(scene);
         await eyeModel.load((pct, msg) => ui.updateLoading(pct, msg));
 
-        ui.updateLoading(92, 'Building surgical instruments...');
+        // Apply env map to eye model for reflections
+        if (envMap && eyeModel.group) {
+            eyeModel.group.traverse(child => {
+                if (child.isMesh && child.material) {
+                    child.material.envMap = envMap;
+                    child.material.envMapIntensity = 0.5;
+                    child.material.needsUpdate = true;
+                }
+            });
+        }
 
-        // Build surgical tools
+        // Hide skin/eyelid so we can see the eyeball
+        eyeModel.setPartOpacity('skin', 0.0);
+        eyeModel.setPartVisibility('skin', false);
+        eyeModel.setPartOpacity('eyelid', 0.12);
+        eyeModel.setPartOpacity('lacrimal', 0.15);
+
+        // Add tear film — glossy transparent sphere for wet glistening look
+        addTearFilm();
+
+        ui.updateLoading(92, 'Building surgical instruments...');
         surgicalTools = new SurgicalTools(scene);
 
-        ui.updateLoading(95, 'Initializing simulation...');
+        ui.updateLoading(94, 'Setting up audio...');
+        audioSystem = new AudioSystem();
 
-        // Create animation controller
+        ui.updateLoading(95, 'Initializing simulation...');
         animations = new SurgeryAnimations(eyeModel, surgicalTools, scene);
 
-        // Initialize UI
         ui.init();
 
         // Wire: step changes -> build sub-steps
         ui.onStepChange = (stepId) => {
             const subSteps = animations.buildSubSteps(stepId, camera, controls);
+            if (dragCards) dragCards.clearAll();
             return subSteps;
         };
 
-        // Wire: sub-step changes -> play animation
         ui.onSubStepChange = (subStepIndex) => {
             animations.playSubStep(subStepIndex);
+            if (audioSystem && audioSystem.enabled) audioSystem.playToolContact();
         };
 
         // Draggable complication cards
@@ -63,22 +86,21 @@
                 animations.playSubStep(ui.currentSubStep);
             } else {
                 animations.showComplication(stepId, compIndex);
+                if (audioSystem) audioSystem.playWarning();
             }
         };
 
-        // Wire: complication clicks -> spawn draggable card + show on eye
         ui.onComplicationClick = (stepId, compIndex) => {
             if (compIndex === -1) {
                 animations.hideComplication();
                 animations.playSubStep(ui.currentSubStep);
             } else {
                 animations.showComplication(stepId, compIndex);
-                // Also spawn a draggable card
                 dragCards.spawnCard(stepId, compIndex);
+                if (audioSystem) audioSystem.playWarning();
             }
         };
 
-        // Toggle complications button now spawns all cards for current step
         document.getElementById('btn-toggle-complications').addEventListener('click', () => {
             if (dragCards.cards.length > 0) {
                 dragCards.clearAll();
@@ -88,7 +110,6 @@
             }
         });
 
-        // Reset view button
         document.getElementById('btn-reset-view').addEventListener('click', () => {
             resetCamera();
             const subSteps = animations.buildSubSteps(ui.currentStep, camera, controls);
@@ -97,34 +118,69 @@
             if (subSteps.length > 0) ui.goToSubStep(0);
         });
 
-        // WebXR
+        const pauseBtn = document.getElementById('btn-pause');
+        if (pauseBtn) pauseBtn.addEventListener('click', togglePause);
+
+        const audioBtn = document.getElementById('btn-audio');
+        if (audioBtn) {
+            audioBtn.addEventListener('click', () => {
+                if (!audioSystem.initialized) {
+                    audioSystem.init().then(() => {
+                        audioSystem.startAmbience();
+                        audioBtn.classList.add('active');
+                    });
+                } else {
+                    audioSystem.enabled = !audioSystem.enabled;
+                    audioBtn.classList.toggle('active', audioSystem.enabled);
+                    if (audioSystem.enabled) audioSystem.startAmbience();
+                    else audioSystem.stopAmbience();
+                }
+            });
+        }
+
         setupWebXR();
 
         ui.updateLoading(100, 'Ready!');
         setTimeout(() => ui.hideLoading(), 500);
 
-        // Start render loop
+        document.addEventListener('click', () => {
+            if (audioSystem && !audioSystem.initialized) {
+                audioSystem.init().then(() => audioSystem.startAmbience());
+            }
+        }, { once: true });
+
         renderer.setAnimationLoop(render);
+    }
+
+    function togglePause() {
+        isPaused = !isPaused;
+        const btn = document.getElementById('btn-pause');
+        if (btn) {
+            btn.querySelector('i').className = isPaused ? 'fas fa-play' : 'fas fa-pause';
+            btn.title = isPaused ? 'Resume' : 'Pause';
+        }
+        if (isPaused) gsap.globalTimeline.pause();
+        else gsap.globalTimeline.resume();
     }
 
     function setupScene() {
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x080c14);
-        scene.fog = new THREE.FogExp2(0x080c14, 0.06);
+        scene.background = new THREE.Color(0x0a0e18);
+        // NO fog — we want everything crisp and visible
 
-        camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(0, 0, 5);
+        // Tighter FOV for intimate surgical close-up feel
+        camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 0.3, 4);
 
         renderer = new THREE.WebGLRenderer({
             antialias: true,
-            alpha: false,
             powerPreference: 'high-performance',
         });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         renderer.outputEncoding = THREE.sRGBEncoding;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.2;
+        renderer.toneMappingExposure = 0.95;
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -132,95 +188,138 @@
 
         controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
-        controls.dampingFactor = 0.08;
-        controls.rotateSpeed = 0.8;
-        controls.zoomSpeed = 0.6;
+        controls.dampingFactor = 0.06;
+        controls.rotateSpeed = 0.7;
+        controls.zoomSpeed = 0.5;
         controls.minDistance = 1.5;
-        controls.maxDistance = 12;
+        controls.maxDistance = 10;
         controls.target.set(0, 0, 0);
         controls.update();
 
         window.addEventListener('resize', onResize);
         renderer.domElement.addEventListener('mousemove', onMouseMove);
         renderer.domElement.addEventListener('click', onMouseClick);
+
+        // Generate a procedural environment cubemap for reflections
+        envMap = generateEnvMap(renderer);
+        if (envMap) scene.environment = envMap;
     }
 
-    function setupLighting() {
-        scene.add(new THREE.AmbientLight(0x404060, 0.6));
+    /* ---- Generate procedural environment cubemap ---- */
+    function generateEnvMap(renderer) {
+        try {
+            const pmremGenerator = new THREE.PMREMGenerator(renderer);
+            pmremGenerator.compileEquirectangularShader();
 
-        const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
-        keyLight.position.set(2, 5, 4);
+            // Simple lit scene for the env map
+            const envScene = new THREE.Scene();
+            envScene.background = new THREE.Color(0x1a2a3a);
+
+            // Big emitting sphere (surgical lamp reflection)
+            const lightSphere = new THREE.Mesh(
+                new THREE.SphereGeometry(2, 16, 16),
+                new THREE.MeshBasicMaterial({ color: 0xfff5e6 })
+            );
+            lightSphere.position.set(0, 10, 5);
+            envScene.add(lightSphere);
+
+            // Cool blue side
+            const blueSphere = new THREE.Mesh(
+                new THREE.SphereGeometry(3, 16, 16),
+                new THREE.MeshBasicMaterial({ color: 0x4488bb })
+            );
+            blueSphere.position.set(-10, 3, 0);
+            envScene.add(blueSphere);
+
+            // Warm side
+            const warmSphere = new THREE.Mesh(
+                new THREE.SphereGeometry(2, 16, 16),
+                new THREE.MeshBasicMaterial({ color: 0xffddaa })
+            );
+            warmSphere.position.set(10, 2, 2);
+            envScene.add(warmSphere);
+
+            // Floor reflection
+            const floorPlane = new THREE.Mesh(
+                new THREE.PlaneGeometry(50, 50),
+                new THREE.MeshBasicMaterial({ color: 0x0c1520 })
+            );
+            floorPlane.rotation.x = -Math.PI / 2;
+            floorPlane.position.y = -5;
+            envScene.add(floorPlane);
+
+            const renderTarget = pmremGenerator.fromScene(envScene, 0.04);
+            pmremGenerator.dispose();
+
+            // Clean up
+            envScene.traverse(c => {
+                if (c.geometry) c.geometry.dispose();
+                if (c.material) c.material.dispose();
+            });
+
+            return renderTarget.texture;
+        } catch (e) {
+            console.warn('Failed to generate env map:', e);
+            return null;
+        }
+    }
+
+    /* ---- "THE GOOD DOCTOR" CINEMATIC LIGHTING ---- */
+    function setupCinematicLighting() {
+        // Dimmer ambient — surgical scenes should be darker
+        scene.add(new THREE.AmbientLight(0x1a2535, 0.22));
+
+        // Subtle hemisphere
+        scene.add(new THREE.HemisphereLight(0x4466aa, 0x442211, 0.12));
+
+        // KEY: Warm surgical lamp (toned down)
+        const keyLight = new THREE.DirectionalLight(0xffe8c8, 0.6);
+        keyLight.position.set(0.3, 5, 2.5);
         keyLight.castShadow = true;
-        keyLight.shadow.mapSize.set(1024, 1024);
+        keyLight.shadow.mapSize.set(2048, 2048);
+        keyLight.shadow.bias = -0.0005;
         scene.add(keyLight);
 
-        const fillLight = new THREE.DirectionalLight(0x8ec5fc, 0.4);
-        fillLight.position.set(-3, 2, -2);
+        // FILL: Cool blue (softer)
+        const fillLight = new THREE.DirectionalLight(0x4477aa, 0.2);
+        fillLight.position.set(-4, 1.5, 1);
         scene.add(fillLight);
 
-        const rimLight = new THREE.DirectionalLight(0x00d4aa, 0.3);
-        rimLight.position.set(0, -2, -5);
+        // RIM: Teal edge light (subtle)
+        const rimLight = new THREE.DirectionalLight(0x00ccaa, 0.18);
+        rimLight.position.set(0, 0, -4);
         scene.add(rimLight);
 
-        const eyeLight = new THREE.PointLight(0xffffff, 0.5, 8);
-        eyeLight.position.set(0, 1, 3);
-        scene.add(eyeLight);
+        // SPECULAR: Cornea highlight (gentler)
+        const eyeSpecular = new THREE.PointLight(0xffffff, 0.35, 6, 2);
+        eyeSpecular.position.set(0.5, 1.5, 3);
+        scene.add(eyeSpecular);
 
-        const spotlight = new THREE.SpotLight(0xfff5e6, 0.8, 15, Math.PI / 6, 0.5, 1);
-        spotlight.position.set(0, 4, 3);
-        spotlight.target.position.set(0, 0, 0);
-        spotlight.castShadow = true;
-        scene.add(spotlight);
-        scene.add(spotlight.target);
+        // SURGICAL SPOT: Operating light (toned down)
+        const surgicalSpot = new THREE.SpotLight(0xffeedd, 0.7, 10, Math.PI / 7, 0.4, 1);
+        surgicalSpot.position.set(0, 4, 2);
+        surgicalSpot.target.position.set(0, 0, 0);
+        surgicalSpot.castShadow = true;
+        surgicalSpot.shadow.mapSize.set(1024, 1024);
+        scene.add(surgicalSpot);
+        scene.add(surgicalSpot.target);
 
-        addEnvironment();
-    }
-
-    function addEnvironment() {
-        const platformGeo = new THREE.CylinderGeometry(4, 4, 0.05, 64);
-        const platformMat = new THREE.MeshPhysicalMaterial({ color: 0x0c1220, roughness: 0.8, metalness: 0.2 });
-        const platform = new THREE.Mesh(platformGeo, platformMat);
-        platform.position.y = -2;
-        platform.receiveShadow = true;
-        scene.add(platform);
-
-        const ringGeo = new THREE.RingGeometry(3.8, 4.0, 64);
-        const ringMat = new THREE.MeshBasicMaterial({ color: 0x00d4aa, transparent: true, opacity: 0.15, side: THREE.DoubleSide });
-        const ring = new THREE.Mesh(ringGeo, ringMat);
-        ring.rotation.x = -Math.PI / 2;
-        ring.position.y = -1.97;
-        scene.add(ring);
-
-        // Floating particles
-        const count = 150;
-        const geo = new THREE.BufferGeometry();
-        const positions = new Float32Array(count * 3);
-        for (let i = 0; i < count; i++) {
-            positions[i * 3] = (Math.random() - 0.5) * 20;
-            positions[i * 3 + 1] = (Math.random() - 0.5) * 20;
-            positions[i * 3 + 2] = (Math.random() - 0.5) * 20;
-        }
-        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        const mat = new THREE.PointsMaterial({
-            size: 0.03,
-            color: 0x00d4aa,
-            transparent: true,
-            opacity: 0.3,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-        });
-        const particles = new THREE.Points(geo, mat);
-        particles.userData.isParticles = true;
-        scene.add(particles);
+        // ACCENT (gentler)
+        const accentLight = new THREE.PointLight(0xffaa66, 0.08, 5, 2);
+        accentLight.position.set(2, -0.5, 2);
+        scene.add(accentLight);
     }
 
     function setupPostProcessing() {
         try {
             composer = new THREE.EffectComposer(renderer);
             composer.addPass(new THREE.RenderPass(scene, camera));
+
             const bloomPass = new THREE.UnrealBloomPass(
                 new THREE.Vector2(window.innerWidth, window.innerHeight),
-                0.3, 0.4, 0.85
+                0.25,  // strength — subtle glow only
+                0.6,   // radius
+                0.9    // threshold — only the brightest spots bloom
             );
             composer.addPass(bloomPass);
         } catch (e) {
@@ -289,12 +388,40 @@
             if (partName) {
                 eyeModel.highlightPart(partName, 0x00ffcc);
                 setTimeout(() => eyeModel.unhighlightPart(partName), 1500);
+                if (audioSystem && audioSystem.enabled) audioSystem.playToolContact();
             }
         }
     }
 
+    /* ---- Tear film: wet sheen over the whole eye ---- */
+    function addTearFilm() {
+        // Find the bounding sphere of the eye model to match size
+        const box = new THREE.Box3().setFromObject(eyeModel.group);
+        const sphere = new THREE.Sphere();
+        box.getBoundingSphere(sphere);
+
+        const tearGeo = new THREE.SphereGeometry(sphere.radius * 1.02, 64, 64);
+        const tearMat = new THREE.MeshPhysicalMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.04,
+            roughness: 0.0,
+            metalness: 0.0,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.0,
+            envMapIntensity: 1.5,
+            side: THREE.FrontSide,
+            depthWrite: false,
+        });
+        if (envMap) tearMat.envMap = envMap;
+
+        const tearFilm = new THREE.Mesh(tearGeo, tearMat);
+        tearFilm.position.copy(sphere.center).sub(eyeModel.group.position);
+        eyeModel.group.add(tearFilm);
+    }
+
     function resetCamera() {
-        gsap.to(camera.position, { x: 0, y: 0, z: 5, duration: 1.0, ease: "power2.inOut" });
+        gsap.to(camera.position, { x: 0, y: 0.3, z: 4, duration: 1.0, ease: "power2.inOut" });
         gsap.to(controls.target, { x: 0, y: 0, z: 0, duration: 1.0, ease: "power2.inOut" });
     }
 
@@ -304,7 +431,6 @@
                 if (supported) {
                     renderer.xr.enabled = true;
                     ui.showVRButton();
-
                     const startVR = async () => {
                         try {
                             const session = await navigator.xr.requestSession('immersive-vr', {
@@ -312,11 +438,8 @@
                             });
                             renderer.xr.setSession(session);
                             session.addEventListener('end', () => renderer.xr.setSession(null));
-                        } catch (e) {
-                            console.warn('VR session failed:', e);
-                        }
+                        } catch (e) { console.warn('VR session failed:', e); }
                     };
-
                     document.getElementById('btn-vr')?.addEventListener('click', startVR);
                     document.getElementById('btn-enter-vr')?.addEventListener('click', startVR);
                 }
@@ -337,21 +460,19 @@
         const delta = clock.getDelta();
         const elapsed = clock.getElapsedTime();
 
+        if (isPaused) {
+            if (composer) composer.render();
+            else renderer.render(scene, camera);
+            return;
+        }
+
         controls.update();
 
-        // Rotate ambient particles
-        scene.traverse(obj => {
-            if (obj.userData.isParticles) obj.rotation.y = elapsed * 0.02;
-        });
-
-        // Update debris particles (phaco aspiration effect)
+        if (operatingRoom) operatingRoom.update(elapsed);
         if (animations) animations.updateParticles(delta);
 
-        if (composer) {
-            composer.render();
-        } else {
-            renderer.render(scene, camera);
-        }
+        if (composer) composer.render();
+        else renderer.render(scene, camera);
     }
 
     window.addEventListener('DOMContentLoaded', init);

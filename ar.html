@@ -2,378 +2,196 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OptiSim - AR Mode</title>
-    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v7.0.0/dist/aframe-extras.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>OptiSim AR - Eye Surgery in Augmented Reality</title>
+
+    <!-- A-Frame -->
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    <!-- AR.js for A-Frame -->
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Inter', -apple-system, sans-serif; overflow: hidden; background: #000; }
+        * { margin: 0; padding: 0; }
+        body { overflow: hidden; font-family: 'Inter', -apple-system, sans-serif; }
 
-        /* AR UI Overlay */
-        .ar-ui {
-            position: fixed;
-            z-index: 100;
-            pointer-events: none;
+        .ar-overlay {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+            padding: 16px; display: flex; justify-content: space-between;
+            align-items: flex-start; pointer-events: none;
         }
-        .ar-ui > * { pointer-events: auto; }
+        .ar-overlay > * { pointer-events: auto; }
 
-        .ar-top {
-            top: 0; left: 0; right: 0;
-            padding: 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .ar-title {
+            background: rgba(0,0,0,0.75); backdrop-filter: blur(10px);
+            border-radius: 12px; padding: 10px 16px; color: white;
         }
-
-        .ar-logo {
-            background: rgba(0,0,0,0.7);
-            backdrop-filter: blur(10px);
-            border-radius: 12px;
-            padding: 10px 18px;
-            color: #00d4aa;
-            font-weight: 700;
-            font-size: 1.1rem;
-        }
+        .ar-title h3 { font-size: 0.9rem; color: #00d4aa; margin-bottom: 2px; }
+        .ar-title p { font-size: 0.7rem; color: #8892a4; }
 
         .ar-btn {
-            background: rgba(0,0,0,0.7);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(0,212,170,0.3);
-            border-radius: 10px;
-            padding: 10px 16px;
-            color: #fff;
-            font-size: 0.85rem;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 6px;
+            background: rgba(0,0,0,0.75); backdrop-filter: blur(10px);
+            border: 1px solid rgba(0,212,170,0.3); border-radius: 10px;
+            padding: 10px 16px; color: white; font-size: 0.8rem;
+            cursor: pointer; text-decoration: none; display: flex;
+            align-items: center; gap: 6px;
         }
         .ar-btn:hover { border-color: #00d4aa; }
-        .ar-btn i { color: #00d4aa; }
 
         .ar-bottom {
-            bottom: 0; left: 0; right: 0;
-            padding: 16px;
+            position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+            padding: 16px; display: flex; justify-content: center; gap: 10px;
+            pointer-events: none;
         }
-
-        .ar-step-bar {
-            background: rgba(0,0,0,0.8);
-            backdrop-filter: blur(10px);
-            border-radius: 14px;
-            padding: 14px 20px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            overflow-x: auto;
-        }
+        .ar-bottom > * { pointer-events: auto; }
 
         .ar-step-btn {
-            background: rgba(255,255,255,0.08);
-            border: 1px solid rgba(255,255,255,0.15);
-            border-radius: 10px;
-            padding: 8px 14px;
-            color: #ccc;
-            font-size: 0.8rem;
-            cursor: pointer;
-            white-space: nowrap;
-            transition: all 0.3s;
+            background: rgba(0,0,0,0.8); backdrop-filter: blur(10px);
+            border: 1px solid rgba(0,212,170,0.3); border-radius: 50px;
+            padding: 12px 24px; color: white; font-size: 0.85rem;
+            font-weight: 600; cursor: pointer; transition: all 0.3s;
         }
-        .ar-step-btn.active {
-            background: rgba(0,212,170,0.15);
-            border-color: #00d4aa;
-            color: #00d4aa;
-            font-weight: 600;
-        }
-        .ar-step-btn:hover { border-color: #00d4aa; }
+        .ar-step-btn:hover { background: rgba(0,212,170,0.2); border-color: #00d4aa; }
+        .ar-step-btn:disabled { opacity: 0.3; }
+        .ar-step-btn.primary { background: rgba(0,212,170,0.3); border-color: #00d4aa; }
 
-        .ar-info-panel {
-            position: fixed;
-            bottom: 90px;
-            left: 16px;
-            right: 16px;
-            z-index: 100;
-            background: rgba(0,0,0,0.85);
-            backdrop-filter: blur(15px);
-            border: 1px solid rgba(0,212,170,0.2);
-            border-radius: 14px;
-            padding: 16px 20px;
-            color: #e8eaf0;
-            max-height: 200px;
-            overflow-y: auto;
-            display: none;
+        .ar-info {
+            position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.85); backdrop-filter: blur(10px);
+            border: 1px solid rgba(0,212,170,0.2); border-radius: 12px;
+            padding: 14px 20px; color: white; max-width: 400px;
+            text-align: center; z-index: 100;
         }
-        .ar-info-panel.show { display: block; }
-        .ar-info-panel h3 { color: #00d4aa; font-size: 1rem; margin-bottom: 6px; }
-        .ar-info-panel p { font-size: 0.82rem; color: #8892a4; line-height: 1.5; }
+        .ar-info h4 { font-size: 0.85rem; color: #00d4aa; margin-bottom: 4px; }
+        .ar-info p { font-size: 0.72rem; color: #8892a4; line-height: 1.4; }
 
-        .ar-instructions {
-            position: fixed;
-            top: 50%; left: 50%;
+        .ar-hint {
+            position: fixed; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            z-index: 100;
-            background: rgba(0,0,0,0.85);
-            backdrop-filter: blur(15px);
-            border: 1px solid rgba(0,212,170,0.3);
-            border-radius: 18px;
-            padding: 30px;
-            text-align: center;
-            color: #fff;
-            max-width: 400px;
+            background: rgba(0,0,0,0.9); border-radius: 16px;
+            padding: 30px 40px; color: white; text-align: center;
+            z-index: 200; animation: fadeIn 0.5s ease;
         }
-        .ar-instructions h2 { color: #00d4aa; margin-bottom: 10px; }
-        .ar-instructions p { color: #8892a4; font-size: 0.9rem; line-height: 1.5; margin-bottom: 16px; }
-        .ar-instructions .ar-btn { margin: 0 auto; justify-content: center; }
-        .ar-instructions.hidden { display: none; }
+        .ar-hint h2 { font-size: 1.2rem; color: #00d4aa; margin-bottom: 8px; }
+        .ar-hint p { font-size: 0.85rem; color: #8892a4; margin-bottom: 4px; }
+        .ar-hint.hidden { display: none; }
 
-        /* Gesture hints */
-        .gesture-hint {
-            position: fixed;
-            bottom: 100px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 90;
-            background: rgba(0,0,0,0.7);
-            padding: 8px 16px;
-            border-radius: 20px;
-            color: #8892a4;
-            font-size: 0.75rem;
-            pointer-events: none;
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translate(-50%, -40%); }
+            to { opacity: 1; transform: translate(-50%, -50%); }
         }
     </style>
 </head>
 <body>
-    <!-- A-Frame Scene -->
+
+    <!-- A-Frame AR Scene with Hiro marker -->
     <a-scene
-        id="ar-scene"
         embedded
-        renderer="colorManagement: true; physicallyCorrectLights: true"
-        loading-screen="enabled: false"
+        arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
         vr-mode-ui="enabled: false"
+        renderer="logarithmicDepthBuffer: true; colorManagement: true; sortObjects: true;"
     >
-        <!-- Camera with cursor -->
-        <a-entity id="rig" position="0 1.5 2.5">
-            <a-camera
-                id="ar-camera"
-                look-controls="enabled: true; touchEnabled: true; pointerLockEnabled: false"
-                wasd-controls="enabled: false"
-            >
-                <a-cursor color="#00d4aa" raycaster="objects: .clickable" fuse="false"></a-cursor>
-            </a-camera>
-        </a-entity>
+        <a-entity camera></a-entity>
 
-        <!-- Lighting -->
-        <a-light type="ambient" color="#606080" intensity="0.6"></a-light>
-        <a-light type="directional" color="#ffffff" intensity="1.2" position="2 5 4" castShadow="true"></a-light>
-        <a-light type="directional" color="#8ec5fc" intensity="0.3" position="-3 2 -2"></a-light>
-        <a-light type="point" color="#00d4aa" intensity="0.3" position="0 0 2"></a-light>
+        <!-- Hiro marker (most common, built-in) -->
+        <a-marker preset="hiro" id="eye-marker">
+            <a-entity
+                id="ar-eye-model"
+                gltf-model="url(assets/anatomy_of_the_eye.glb)"
+                scale="0.3 0.3 0.3"
+                position="0 0.5 0"
+                rotation="-90 0 0"
+                animation="property: rotation; to: -90 360 0; loop: true; dur: 20000; easing: linear;"
+            ></a-entity>
 
-        <!-- Eye model placeholder (loads GLTF) -->
-        <a-entity id="eye-model-ar" position="0 1.2 0" scale="1.5 1.5 1.5">
-            <!-- Will be populated by JS -->
-        </a-entity>
+            <!-- Annotations -->
+            <a-entity id="ar-labels">
+                <a-text value="Cornea" position="0 1.2 0.4" scale="0.3 0.3 0.3" color="#00d4aa" align="center"></a-text>
+                <a-text value="Iris" position="0 1.0 0.25" scale="0.25 0.25 0.25" color="#4a8c6f" align="center"></a-text>
+                <a-text value="Lens" position="0 0.8 0.1" scale="0.25 0.25 0.25" color="#d4c090" align="center"></a-text>
+                <a-text value="Retina" position="-0.3 0.6 -0.2" scale="0.2 0.2 0.2" color="#cc4444" align="center"></a-text>
+                <a-text value="Optic Nerve" position="0 0.3 -0.5" scale="0.2 0.2 0.2" color="#daa520" align="center"></a-text>
+            </a-entity>
 
-        <!-- Surgical table / platform -->
-        <a-cylinder
-            position="0 0.3 0"
-            radius="0.8"
-            height="0.6"
-            color="#0c1220"
-            shadow="receive: true"
-        ></a-cylinder>
-
-        <!-- Grid floor -->
-        <a-plane
-            position="0 0 0"
-            rotation="-90 0 0"
-            width="10"
-            height="10"
-            color="#080c14"
-            shadow="receive: true"
-        ></a-plane>
-
-        <!-- Ambient particles -->
-        <a-entity
-            id="ar-particles"
-            position="0 1.5 0"
-            particle-system="preset: dust; color: #00d4aa, #1a3d5c; particleCount: 100; size: 0.05; opacity: 0.3; maxAge: 4"
-        ></a-entity>
-
-        <!-- Sky -->
-        <a-sky color="#080c14"></a-sky>
+            <a-light type="ambient" color="#fff" intensity="0.8"></a-light>
+            <a-light type="directional" color="#fff" intensity="1.2" position="1 2 1"></a-light>
+            <a-light type="point" color="#00d4aa" intensity="0.3" position="0 1.5 0.5"></a-light>
+        </a-marker>
     </a-scene>
 
-    <!-- Instructions Overlay -->
-    <div class="ar-instructions" id="ar-instructions">
-        <h2>AR Eye Surgery Viewer</h2>
-        <p>View the 3D eye model in augmented reality through your camera.
-           Move your phone around to see it from different angles.
-           Pinch to resize, drag to rotate.</p>
-        <button class="ar-btn" id="btn-start-ar" onclick="startAR()">
-            <i class="fas fa-play"></i> Enter AR View
-        </button>
-        <p style="margin-top:12px; font-size:0.75rem; color:#666;">
-            Tip: Works best on mobile. On desktop, drag to look around.
+    <!-- UI Overlay -->
+    <div class="ar-overlay">
+        <div class="ar-title">
+            <h3>OptiSim AR</h3>
+            <p>Point camera at Hiro marker</p>
+        </div>
+        <a href="index.html" class="ar-btn">&larr; Back to 3D</a>
+    </div>
+
+    <!-- Initial hint -->
+    <div class="ar-hint" id="ar-hint">
+        <h2>AR Mode</h2>
+        <p>Print or display the <strong>Hiro marker</strong>.</p>
+        <p>Point your camera at it to see the 3D eye.</p>
+        <p style="margin-top: 12px; font-size: 0.72rem; color: #666;">
+            <a href="https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/images/hiro.png"
+               target="_blank" style="color: #00d4aa;">Download Hiro Marker Image</a>
         </p>
+        <br>
+        <button class="ar-step-btn primary" onclick="document.getElementById('ar-hint').classList.add('hidden');">
+            Got it — Start AR
+        </button>
     </div>
 
-    <!-- Top UI -->
-    <div class="ar-ui ar-top">
-        <div class="ar-logo"><i class="fas fa-eye"></i> OptiSim AR</div>
-        <div style="display:flex; gap:8px;">
-            <button class="ar-btn" id="btn-info-toggle" onclick="toggleInfo()">
-                <i class="fas fa-info-circle"></i> Info
-            </button>
-            <a href="index.html" class="ar-btn">
-                <i class="fas fa-desktop"></i> Desktop
-            </a>
-        </div>
+    <!-- Step info -->
+    <div class="ar-info" id="ar-info">
+        <h4 id="ar-step-name">Full Eye Anatomy</h4>
+        <p id="ar-step-desc">Complete 3D eye model. Rotate the marker to view from all angles.</p>
     </div>
 
-    <!-- Bottom Step Bar -->
-    <div class="ar-ui ar-bottom">
-        <div class="ar-step-bar" id="ar-step-bar">
-            <!-- Populated by JS -->
-        </div>
+    <!-- Navigation -->
+    <div class="ar-bottom">
+        <button class="ar-step-btn" id="ar-prev" onclick="arPrevStep()" disabled>&larr; Prev</button>
+        <button class="ar-step-btn primary" id="ar-next" onclick="arNextStep()">Next View &rarr;</button>
     </div>
-
-    <!-- Info Panel -->
-    <div class="ar-info-panel" id="ar-info-panel">
-        <h3 id="ar-info-title">Cataract Surgery</h3>
-        <p id="ar-info-desc">Select a step below to learn about each phase of the surgery.</p>
-    </div>
-
-    <div class="gesture-hint"><i class="fas fa-hand-pointer"></i> Touch & drag to rotate | Pinch to zoom | Tap steps below</div>
-
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 
     <script>
-        // Surgery steps data (inline for AR page)
-        const AR_STEPS = [
-            { name: "Preparation", short: "Prep", desc: "Eye is numbed with anesthetic drops. Antiseptic applied. Lid speculum holds eyelids open." },
-            { name: "Corneal Incision", short: "Incision", desc: "2.4mm self-sealing tunnel cut into the cornea at the limbus using a keratome blade." },
-            { name: "Capsulorhexis", short: "Rhexis", desc: "Circular opening torn in the anterior lens capsule using forceps. Most skill-dependent step." },
-            { name: "Phacoemulsification", short: "Phaco", desc: "Ultrasonic probe breaks the cloudy lens into fragments and suctions them out." },
-            { name: "IOL Implantation", short: "IOL", desc: "Foldable artificial lens injected through the incision. Unfolds inside the capsular bag." },
-            { name: "Wound Closure", short: "Closure", desc: "Viscoelastic removed, wound hydrated to self-seal. Antibiotic drops applied." }
+        const arSteps = [
+            { name: "Full Eye Anatomy", desc: "All structures visible. Rotate the marker to explore.", scale: "0.3 0.3 0.3", rot: "-90 0 0", anim: true },
+            { name: "Anterior View", desc: "Surgeon's view — looking at the cornea, iris, and pupil.", scale: "0.45 0.45 0.45", rot: "0 0 0", anim: false },
+            { name: "Corneal Incision Site", desc: "Temporal limbus where the 2.4mm keratome incision is made.", scale: "0.4 0.4 0.4", rot: "-90 45 0", anim: false },
+            { name: "Cross-Section", desc: "Internal anatomy: lens, capsule, zonules, vitreous, retina.", scale: "0.4 0.4 0.4", rot: "-90 90 0", anim: false },
+            { name: "Posterior View", desc: "Optic nerve head and retinal vasculature from behind.", scale: "0.4 0.4 0.4", rot: "-90 180 0", anim: false },
         ];
+        let arStep = 0;
 
-        const modelPaths = [
-            'assets/anatomy_of_the_eye.glb',
-            'assets/realistic_human_eye.glb',
-            'assets/eye-glb/source/OJO GLB.glb',
-        ];
-
-        let currentARStep = -1;
-        let modelLoaded = false;
-
-        // Build step bar
-        const stepBar = document.getElementById('ar-step-bar');
-        AR_STEPS.forEach((step, i) => {
-            const btn = document.createElement('button');
-            btn.className = 'ar-step-btn';
-            btn.textContent = step.short;
-            btn.onclick = () => selectARStep(i);
-            stepBar.appendChild(btn);
-        });
-
-        function selectARStep(index) {
-            currentARStep = index;
-            const step = AR_STEPS[index];
-
-            // Update buttons
-            document.querySelectorAll('.ar-step-btn').forEach((btn, i) => {
-                btn.classList.toggle('active', i === index);
-            });
-
-            // Show info
-            document.getElementById('ar-info-title').textContent = `Step ${index + 1}: ${step.name}`;
-            document.getElementById('ar-info-desc').textContent = step.desc;
-            document.getElementById('ar-info-panel').classList.add('show');
-
-            // Rotate model to highlight relevant area
-            const model = document.getElementById('eye-model-ar');
-            const rotations = [
-                '0 0 0',        // Prep - front view
-                '0 -30 0',     // Incision - temporal
-                '-30 0 0',     // Rhexis - top-down
-                '-25 15 0',    // Phaco - angled
-                '-20 -10 0',   // IOL - slight angle
-                '0 0 0',       // Closure - front
-            ];
-            model.setAttribute('animation', {
-                property: 'rotation',
-                to: rotations[index],
-                dur: 1000,
-                easing: 'easeInOutQuad'
-            });
-        }
-
-        function toggleInfo() {
-            const panel = document.getElementById('ar-info-panel');
-            panel.classList.toggle('show');
-        }
-
-        function startAR() {
-            document.getElementById('ar-instructions').classList.add('hidden');
-            loadModel();
-        }
-
-        async function loadModel() {
-            if (modelLoaded) return;
-
-            const modelEntity = document.getElementById('eye-model-ar');
-
-            // Try each model path
-            for (const path of modelPaths) {
-                try {
-                    // Test if file exists
-                    const resp = await fetch(path, { method: 'HEAD' });
-                    if (resp.ok) {
-                        modelEntity.setAttribute('gltf-model', `url(${path})`);
-                        modelEntity.setAttribute('animation__rotate', {
-                            property: 'rotation',
-                            to: '0 360 0',
-                            loop: true,
-                            dur: 20000,
-                            easing: 'linear'
-                        });
-
-                        // Add click interaction
-                        modelEntity.classList.add('clickable');
-                        modelEntity.addEventListener('click', () => {
-                            // Cycle through steps on click
-                            const next = (currentARStep + 1) % AR_STEPS.length;
-                            selectARStep(next);
-                        });
-
-                        modelLoaded = true;
-                        console.log('AR model loaded from:', path);
-                        return;
-                    }
-                } catch (e) {
-                    // Continue to next path
-                }
+        function arUpdateStep() {
+            const s = arSteps[arStep];
+            document.getElementById('ar-step-name').textContent = s.name;
+            document.getElementById('ar-step-desc').textContent = s.desc;
+            const model = document.getElementById('ar-eye-model');
+            model.setAttribute('scale', s.scale);
+            if (s.anim) {
+                model.setAttribute('animation', 'property: rotation; to: -90 360 0; loop: true; dur: 20000; easing: linear;');
+            } else {
+                model.removeAttribute('animation');
+                model.setAttribute('rotation', s.rot);
             }
-
-            console.warn('No GLTF model found for AR mode');
-
-            // Fallback: show basic sphere
-            modelEntity.innerHTML = `
-                <a-sphere color="#f5f0eb" radius="0.5" segments-width="64" segments-height="64" opacity="0.9">
-                    <a-sphere color="#4a8c6f" radius="0.2" position="0 0 0.4" segments-width="32" segments-height="32"></a-sphere>
-                    <a-sphere color="#111" radius="0.08" position="0 0 0.45" segments-width="16" segments-height="16"></a-sphere>
-                </a-sphere>
-            `;
-            modelLoaded = true;
+            document.getElementById('ar-prev').disabled = arStep === 0;
+            document.getElementById('ar-next').textContent = arStep === arSteps.length - 1 ? 'Done' : 'Next View →';
         }
 
-        // Auto-start on mobile
-        if (/Mobi|Android/i.test(navigator.userAgent)) {
-            // Enable touch look-controls
-            document.getElementById('ar-camera').setAttribute('look-controls', 'touchEnabled: true');
+        function arNextStep() {
+            if (arStep < arSteps.length - 1) { arStep++; arUpdateStep(); }
         }
+        function arPrevStep() {
+            if (arStep > 0) { arStep--; arUpdateStep(); }
+        }
+
+        // Hide hint when marker found
+        const marker = document.getElementById('eye-marker');
+        if (marker) marker.addEventListener('markerFound', () => {
+            document.getElementById('ar-hint').classList.add('hidden');
+        });
     </script>
 </body>
 </html>

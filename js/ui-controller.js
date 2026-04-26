@@ -400,6 +400,10 @@ class UIController {
                 case 'Escape':
                     this.hideComplications();
                     break;
+                case 'p':
+                    // Pause/resume - trigger the pause button click
+                    document.getElementById('btn-pause')?.click();
+                    break;
             }
         });
     }

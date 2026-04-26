@@ -98,8 +98,17 @@ class EyeModel {
                     const center = box.getCenter(new THREE.Vector3());
                     model.position.sub(center);
 
+                    // Apply realistic materials to fix white/missing textures
+                    this.applyRealisticMaterials(model);
+
                     this.group.add(model);
                     this.gltfScene = model;
+
+                    // Debug: log model info
+                    let meshCount = 0;
+                    model.traverse(c => { if (c.isMesh) meshCount++; });
+                    console.log(`Eye model loaded: ${meshCount} meshes, scale=${scale.toFixed(3)}, center=(${center.x.toFixed(2)},${center.y.toFixed(2)},${center.z.toFixed(2)})`);
+                    console.log('Parts found:', Object.keys(this.parts));
 
                     resolve(model);
                 },
@@ -173,6 +182,259 @@ class EyeModel {
         console.log('Cataloged eye parts:', Object.keys(this.parts));
     }
 
+    /* ---- Apply realistic PBR materials to GLTF model ---- */
+    applyRealisticMaterials(model) {
+        // Material definitions for each anatomy part
+        // "THE GOOD DOCTOR" — wet, glistening, alive materials
+        const materialDefs = {
+            sclera: {
+                // Slightly pink-white, WET glistening surface
+                color: 0xf0e0d8,
+                roughness: 0.2,        // Very smooth = wet
+                metalness: 0.02,
+                clearcoat: 1.0,        // Full clearcoat = tear film
+                clearcoatRoughness: 0.05,
+                envMapIntensity: 1.2,
+            },
+            cornea: {
+                // Crystal clear dome, highly reflective
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.12,
+                roughness: 0.0,
+                metalness: 0.0,
+                clearcoat: 1.0,
+                clearcoatRoughness: 0.0,
+                envMapIntensity: 2.0,
+                side: THREE.DoubleSide,
+                depthWrite: false,
+            },
+            iris: {
+                // Vivid green-hazel, with depth
+                color: 0x3d9b6a,
+                roughness: 0.4,
+                metalness: 0.08,
+                clearcoat: 0.8,        // Wet iris
+                clearcoatRoughness: 0.1,
+                emissive: 0x0a2010,
+                emissiveIntensity: 0.15,
+            },
+            pupil: {
+                // Deep black, slightly reflective (wet)
+                color: 0x020202,
+                roughness: 0.15,
+                metalness: 0.0,
+                clearcoat: 0.9,
+                clearcoatRoughness: 0.05,
+            },
+            lens: {
+                // Amber cataract, slightly cloudy, wet
+                color: 0xd4a050,
+                transparent: true,
+                opacity: 0.7,
+                roughness: 0.08,
+                metalness: 0.0,
+                clearcoat: 0.6,
+                emissive: 0x332200,
+                emissiveIntensity: 0.08,
+            },
+            retina: {
+                // Deep red, vascular, slightly glossy (wet tissue)
+                color: 0xbb3030,
+                roughness: 0.55,
+                metalness: 0.0,
+                clearcoat: 0.3,
+                emissive: 0x440000,
+                emissiveIntensity: 0.15,
+                side: THREE.DoubleSide,
+            },
+            choroid: {
+                // Dark red-brown vascular layer
+                color: 0x7a1800,
+                roughness: 0.7,
+                metalness: 0.0,
+                emissive: 0x220000,
+                emissiveIntensity: 0.08,
+                side: THREE.DoubleSide,
+            },
+            vitreous: {
+                // Nearly invisible gel
+                color: 0xd8eef8,
+                transparent: true,
+                opacity: 0.04,
+                roughness: 0.0,
+                metalness: 0.0,
+                depthWrite: false,
+            },
+            optic_nerve: {
+                // Yellowish, fibrous, slightly shiny
+                color: 0xd4a830,
+                roughness: 0.45,
+                metalness: 0.05,
+                clearcoat: 0.3,
+                emissive: 0x221100,
+                emissiveIntensity: 0.06,
+            },
+            anterior_chamber: {
+                // Aqueous humor — barely visible fluid
+                color: 0xc8e0f0,
+                transparent: true,
+                opacity: 0.06,
+                roughness: 0.0,
+                depthWrite: false,
+            },
+            posterior_chamber: {
+                color: 0xc8e0f0,
+                transparent: true,
+                opacity: 0.04,
+                roughness: 0.0,
+                depthWrite: false,
+            },
+            ciliary: {
+                // Brown muscle tissue
+                color: 0x7a5a48,
+                roughness: 0.6,
+                metalness: 0.0,
+                clearcoat: 0.2,
+            },
+            skin: {
+                // Warm skin tone
+                color: 0xd8a880,
+                roughness: 0.65,
+                metalness: 0.0,
+                clearcoat: 0.1,
+            },
+            eyelid: {
+                // Pink inner eyelid, wet
+                color: 0xcc8870,
+                roughness: 0.4,
+                metalness: 0.0,
+                clearcoat: 0.5,
+            },
+            blood_vessel: {
+                // Bright red, VIVID — stands out
+                color: 0xdd2020,
+                roughness: 0.35,
+                metalness: 0.05,
+                clearcoat: 0.5,
+                emissive: 0x660000,
+                emissiveIntensity: 0.2,
+            },
+            lacrimal: {
+                color: 0xdcb090,
+                roughness: 0.5,
+                metalness: 0.0,
+                clearcoat: 0.3,
+            },
+            capsule: {
+                color: 0xf0e8d0,
+                transparent: true,
+                opacity: 0.1,
+                roughness: 0.15,
+                metalness: 0.0,
+                clearcoat: 0.5,
+                side: THREE.DoubleSide,
+                depthWrite: false,
+            },
+            zonules: {
+                color: 0xd4c5a9,
+                transparent: true,
+                opacity: 0.5,
+                roughness: 0.4,
+            },
+            muscle: {
+                color: 0xb05050,
+                roughness: 0.8,
+                metalness: 0.0,
+            },
+        };
+
+        // Additional name->part mapping by mesh name AND material name
+        // (covers the UMCG anatomy_of_the_eye.glb naming)
+        const nameToPartDirect = {
+            'sclera': 'sclera', 'Sclera': 'sclera',
+            'cornea': 'cornea', 'Cornea': 'cornea', 'Cornea1': 'cornea',
+            'lens': 'lens', 'Lens': 'lens',
+            'iris': 'iris', 'Iris': 'iris', 'Bones10': 'iris',
+            'retina': 'retina', 'Optic_part_of_right_retina': 'retina',
+            'choroid': 'choroid', 'Choroid': 'choroid',
+            'Glasvocht': 'vitreous', 'glasvocht': 'vitreous',
+            'Anterior_chamber': 'anterior_chamber',
+            'Posterior_chamber': 'posterior_chamber',
+            'straalvormig_lichaam': 'ciliary',
+            'Skin': 'skin',
+            'Tarsal_plate_upper_eyelid': 'eyelid',
+            'Tarsal_plate_lower_eyelid': 'eyelid',
+            'Retinal_veins': 'blood_vessel', 'Retinal_arteries': 'blood_vessel',
+            'Right_optic_nerve1': 'optic_nerve', 'Right_optic_nerve2': 'optic_nerve',
+            'Right_lacrimal_caniculus': 'lacrimal',
+        };
+
+        model.traverse((child) => {
+            if (!child.isMesh) return;
+
+            // Try to determine part from userData, mesh name, parent name, or material name
+            let partName = child.userData.anatomyPart;
+
+            if (!partName) {
+                // Try mesh name directly
+                const meshName = child.name || '';
+                for (const [key, val] of Object.entries(nameToPartDirect)) {
+                    if (meshName.includes(key)) { partName = val; break; }
+                }
+            }
+
+            if (!partName && child.parent) {
+                // Try parent name
+                const parentName = child.parent.name || '';
+                for (const [key, val] of Object.entries(nameToPartDirect)) {
+                    if (parentName.includes(key)) { partName = val; break; }
+                }
+            }
+
+            if (!partName && child.material && child.material.name) {
+                // Try material name
+                const matName = child.material.name || '';
+                for (const [key, val] of Object.entries(nameToPartDirect)) {
+                    if (matName.includes(key)) { partName = val; break; }
+                }
+            }
+
+            // Tag it
+            if (partName) child.userData.anatomyPart = partName;
+
+            const def = partName ? materialDefs[partName] : null;
+
+            // Preserve existing texture maps
+            const existingMap = child.material?.map;
+            const existingNormalMap = child.material?.normalMap;
+
+            if (def) {
+                const newMat = new THREE.MeshPhysicalMaterial(def);
+                if (existingMap) newMat.map = existingMap;
+                if (existingNormalMap) newMat.normalMap = existingNormalMap;
+                child.material = newMat;
+            } else {
+                // Unidentified part — still make it look decent (warm tissue tone)
+                child.material = new THREE.MeshPhysicalMaterial({
+                    color: 0xc8a888,
+                    roughness: 0.6,
+                    metalness: 0.0,
+                    clearcoat: 0.2,
+                });
+                if (existingMap) child.material.map = existingMap;
+                if (existingNormalMap) child.material.normalMap = existingNormalMap;
+            }
+
+            child.material.needsUpdate = true;
+            child.userData.originalMaterial = child.material.clone();
+            child.castShadow = true;
+            child.receiveShadow = true;
+        });
+
+        console.log('Applied realistic materials to GLTF model');
+    }
+
     /* ---- Procedural Eye Model (Fallback) ---- */
     buildProceduralEye() {
         // Sclera (white outer shell)
@@ -234,8 +496,6 @@ class EyeModel {
             metalness: 0.0,
             clearcoat: 0.3,
             clearcoatRoughness: 0.4,
-            sheen: 0.5,
-            sheenColor: new THREE.Color(0xffe8e0),
         });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.name = 'sclera';
@@ -257,8 +517,6 @@ class EyeModel {
             metalness: 0.0,
             clearcoat: 1.0,
             clearcoatRoughness: 0.0,
-            transmission: 0.9,
-            thickness: 0.1,
             ior: 1.376, // Real cornea IOR
             envMapIntensity: 1.5,
             side: THREE.DoubleSide,
@@ -367,8 +625,6 @@ class EyeModel {
             roughness: 0.1,
             metalness: 0.0,
             clearcoat: 0.5,
-            transmission: 0.4,
-            thickness: 0.3,
             ior: 1.42, // Real lens IOR
         });
         const mesh = new THREE.Mesh(geo, mat);
@@ -440,8 +696,6 @@ class EyeModel {
             opacity: 0.06,
             roughness: 0.0,
             metalness: 0.0,
-            transmission: 0.95,
-            thickness: 2.0,
             side: THREE.BackSide,
             depthWrite: false,
         });
@@ -513,8 +767,6 @@ class EyeModel {
             roughness: 0.0,
             metalness: 0.1,
             clearcoat: 1.0,
-            transmission: 0.8,
-            thickness: 0.05,
             ior: 1.55,
         });
         const optic = new THREE.Mesh(opticGeo, opticMat);
@@ -731,6 +983,102 @@ class EyeModel {
             if (child.isMesh) meshes.push(child);
         });
         return meshes;
+    }
+
+    /* ============================================
+       Anatomical Landmark Helpers
+       Returns world-space positions of key parts
+       so animations land in the RIGHT place.
+       ============================================ */
+
+    getPartCenter(partName) {
+        const parts = this.getPart(partName);
+        if (!parts || parts.length === 0) return null;
+        const box = new THREE.Box3();
+        parts.forEach(p => box.expandByObject(p));
+        return box.getCenter(new THREE.Vector3());
+    }
+
+    getPartBox(partName) {
+        const parts = this.getPart(partName);
+        if (!parts || parts.length === 0) return null;
+        const box = new THREE.Box3();
+        parts.forEach(p => box.expandByObject(p));
+        return box;
+    }
+
+    /* ---- Eye geometric center ---- */
+    getEyeCenter() {
+        const box = new THREE.Box3().setFromObject(this.group);
+        return box.getCenter(new THREE.Vector3());
+    }
+
+    /* ---- Cornea center (front surface, where incision goes) ---- */
+    getCorneaCenter() {
+        return this.getPartCenter('cornea') || this.getEyeCenter();
+    }
+
+    /* ---- Cornea front-most point (the very tip of the cornea dome) ---- */
+    getCorneaFront() {
+        const box = this.getPartBox('cornea');
+        if (!box) return this.getEyeCenter();
+        const c = box.getCenter(new THREE.Vector3());
+        // Find the axis with greatest extent — that's the optical axis direction
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        // Cornea is the front-most part, return its center pushed slightly forward
+        return center;
+    }
+
+    /* ---- Limbus position (cornea-sclera junction, temporal side, where keratome enters) ---- */
+    getLimbusPosition(side = 'temporal') {
+        const corneaBox = this.getPartBox('cornea');
+        const eyeCenter = this.getEyeCenter();
+        if (!corneaBox) return eyeCenter;
+        const c = corneaBox.getCenter(new THREE.Vector3());
+        const size = corneaBox.getSize(new THREE.Vector3());
+        // Temporal side = side away from nose, x positive in our orientation
+        const dir = side === 'temporal' ? 1 : -1;
+        return new THREE.Vector3(
+            c.x + size.x * 0.45 * dir,
+            c.y,
+            c.z
+        );
+    }
+
+    /* ---- Lens center (where the cataract sits) ---- */
+    getLensCenter() {
+        return this.getPartCenter('lens') || this.getEyeCenter();
+    }
+
+    /* ---- Lens anterior (front face of lens, where capsulorhexis happens) ---- */
+    getLensAnterior() {
+        const lensBox = this.getPartBox('lens');
+        const corneaCenter = this.getCorneaCenter();
+        if (!lensBox) return this.getEyeCenter();
+        const lensCenter = lensBox.getCenter(new THREE.Vector3());
+        const lensSize = lensBox.getSize(new THREE.Vector3());
+        // Anterior = closer to cornea
+        const dir = new THREE.Vector3().subVectors(corneaCenter, lensCenter).normalize();
+        const radius = Math.max(lensSize.x, lensSize.y, lensSize.z) * 0.5;
+        return lensCenter.clone().add(dir.multiplyScalar(radius * 0.7));
+    }
+
+    /* ---- Pupil/visual axis center ---- */
+    getVisualAxis() {
+        const cornea = this.getCorneaCenter();
+        const lens = this.getLensCenter();
+        return { cornea, lens, dir: new THREE.Vector3().subVectors(cornea, lens).normalize() };
+    }
+
+    /* ---- Approach point: where a tool starts before entering the eye ---- */
+    getToolApproachPoint(distance = 1.5) {
+        const limbus = this.getLimbusPosition('temporal');
+        return new THREE.Vector3(
+            limbus.x + distance,
+            limbus.y + distance * 0.3,
+            limbus.z + distance * 0.5
+        );
     }
 
     dispose() {

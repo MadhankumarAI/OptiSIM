@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OptiSim - Advanced Bionic Eye</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="css/bionic.css">
+</head>
+<body class="bionic-page">
+
+    <!-- Top Nav (minimal) -->
+    <nav class="bio-nav">
+        <div class="bio-nav-left">
+            <div class="bio-logo"><i class="fas fa-eye"></i> OptiSim</div>
+        </div>
+        <div class="bio-nav-links">
+            <a href="index.html" class="bio-nav-link"><i class="fas fa-cut"></i> Surgery Sim</a>
+            <a href="bionic-eye.html" class="bio-nav-link active"><i class="fas fa-microchip"></i> Bionic Eye</a>
+            <a href="ar.html" class="bio-nav-link"><i class="fas fa-mobile-alt"></i> AR Mode</a>
+        </div>
+    </nav>
+
+    <!-- ============================================
+         PHASE 1: Full-screen 3D bionic eye hero
+         Click the lens to activate camera
+         ============================================ -->
+    <div id="hero-phase" class="hero-phase">
+        <div id="eye-3d-fullscreen" class="eye-3d-fullscreen">
+            <!-- Three.js renders here -->
+        </div>
+
+        <!-- Overlay prompts -->
+        <div class="hero-overlay">
+            <div class="hero-text" id="hero-text">
+                <div class="hero-badge">Next-Generation Retinal Prosthesis</div>
+                <h1>BIONIC EYE</h1>
+                <p>Click the lens to activate the camera sensor</p>
+                <div class="hero-hint">
+                    <div class="lens-pulse"></div>
+                    <span>Click the glowing lens</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status indicator (shows after camera starts) -->
+        <div class="hero-status hidden" id="hero-status">
+            <div class="processing-dot"></div>
+            <span>Camera active &mdash; Processing at <strong id="fps-counter">0</strong> FPS</span>
+        </div>
+    </div>
+
+    <!-- Hidden video + processing canvases (always in DOM) -->
+    <video id="camera-feed" autoplay playsinline muted style="display:none;"></video>
+    <canvas id="canvas-raw" style="display:none;"></canvas>
+    <canvas id="canvas-edge" style="display:none;"></canvas>
+    <canvas id="canvas-enhance" style="display:none;"></canvas>
+    <canvas id="canvas-objects" style="display:none;"></canvas>
+    <canvas id="canvas-neural" style="display:none;"></canvas>
+
+    <!-- ============================================
+         PHASE 2: Split view — model + pipeline
+         Appears after camera activates
+         ============================================ -->
+    <div id="split-phase" class="split-phase hidden">
+
+        <!-- LEFT: 3D bionic eye (smaller, with camera feed in lens) -->
+        <div class="split-left">
+            <div class="split-model" id="split-model-container">
+                <!-- 3D model moves here -->
+            </div>
+
+            <!-- Component cards under the model -->
+            <div class="split-components">
+                <div class="component-card active" data-component="camera">
+                    <h4><i class="fas fa-camera"></i> Camera Sensor</h4>
+                    <p>120° CMOS, 60fps, IR-enhanced</p>
+                </div>
+                <div class="component-card" data-component="processor">
+                    <h4><i class="fas fa-microchip"></i> Neural Processor</h4>
+                    <p>Edge detection + object recognition, 8ms</p>
+                </div>
+                <div class="component-card" data-component="electrode">
+                    <h4><i class="fas fa-th"></i> Electrode Array</h4>
+                    <p>60×60 platinum grid, 3,600 channels</p>
+                </div>
+                <div class="component-card" data-component="transmitter">
+                    <h4><i class="fas fa-wifi"></i> Wireless TX</h4>
+                    <p>2.4GHz inductive coil through sclera</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- CENTER: Processing pipeline (vertical flow) -->
+        <div class="split-center">
+            <div class="pipeline-vertical">
+                <div class="pv-stage" id="pv-raw">
+                    <div class="pv-label"><span class="pv-num">1</span> Camera Input</div>
+                    <canvas id="pv-canvas-raw" class="pv-canvas"></canvas>
+                </div>
+                <div class="pv-arrow"><i class="fas fa-chevron-down"></i></div>
+
+                <div class="pv-stage" id="pv-edge">
+                    <div class="pv-label"><span class="pv-num">2</span> Edge Detection</div>
+                    <canvas id="pv-canvas-edge" class="pv-canvas"></canvas>
+                </div>
+                <div class="pv-arrow"><i class="fas fa-chevron-down"></i></div>
+
+                <div class="pv-stage" id="pv-enhance">
+                    <div class="pv-label"><span class="pv-num">3</span> Enhancement</div>
+                    <canvas id="pv-canvas-enhance" class="pv-canvas"></canvas>
+                </div>
+                <div class="pv-arrow"><i class="fas fa-chevron-down"></i></div>
+
+                <div class="pv-stage" id="pv-objects">
+                    <div class="pv-label"><span class="pv-num">4</span> Object Recognition</div>
+                    <canvas id="pv-canvas-objects" class="pv-canvas"></canvas>
+                </div>
+                <div class="pv-arrow"><i class="fas fa-chevron-down"></i></div>
+
+                <div class="pv-stage" id="pv-neural">
+                    <div class="pv-label"><span class="pv-num">5</span> Neural Encoding</div>
+                    <canvas id="pv-canvas-neural" class="pv-canvas"></canvas>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="pv-controls">
+                <button class="bio-btn" id="btn-cycle-mode"><i class="fas fa-exchange-alt"></i> Mode</button>
+                <button class="bio-btn" id="btn-toggle-processing"><i class="fas fa-pause"></i> Pause</button>
+                <span class="pv-mode-label" id="stat-mode">Edge</span>
+            </div>
+        </div>
+
+        <!-- RIGHT: Brain output (what patient sees) -->
+        <div class="split-right">
+            <div class="output-section">
+                <div class="output-header">
+                    <i class="fas fa-brain"></i>
+                    <h3>Brain Perception</h3>
+                </div>
+
+                <div class="output-card">
+                    <div class="output-card-label">Current Gen (60 electrodes)</div>
+                    <canvas id="perc-phosphene" class="output-canvas"></canvas>
+                </div>
+
+                <div class="output-card featured">
+                    <div class="output-card-label">Next-Gen (3,600 electrodes)</div>
+                    <canvas id="perc-enhanced" class="output-canvas"></canvas>
+                </div>
+
+                <div class="output-card">
+                    <div class="output-card-label">AI-Augmented</div>
+                    <canvas id="perc-ai" class="output-canvas"></canvas>
+                </div>
+            </div>
+
+            <!-- Neural impulse graph -->
+            <div class="output-section">
+                <div class="output-header">
+                    <i class="fas fa-chart-line"></i>
+                    <h3>Neural Impulses</h3>
+                </div>
+                <canvas id="graph-canvas" class="graph-canvas"></canvas>
+                <div class="graph-legend">
+                    <span><i style="color:#00e5ff;">&#9632;</i> Firing Rate (Hz)</span>
+                    <span><i style="color:#76ff03;">&#9632;</i> Signal (mV)</span>
+                    <span><i style="color:#ff6e40;">&#9632;</i> Activity (%)</span>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="output-stats">
+                <div class="mini-stat"><span class="mini-val" id="stat-resolution">640×480</span><span class="mini-lbl">Resolution</span></div>
+                <div class="mini-stat"><span class="mini-val" id="stat-electrodes">3,600</span><span class="mini-lbl">Electrodes</span></div>
+                <div class="mini-stat"><span class="mini-val" id="stat-latency">8ms</span><span class="mini-lbl">Latency</span></div>
+                <div class="mini-stat"><span class="mini-val" id="stat-objects">0</span><span class="mini-lbl">Objects</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Fullscreen expand overlay -->
+    <div id="expand-overlay" class="expand-overlay hidden">
+        <canvas id="expand-canvas"></canvas>
+        <div class="expand-close">Click anywhere to close</div>
+    </div>
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+
+    <script src="js/bionic-vision.js"></script>
+    <script src="js/neural-pathway.js"></script>
+    <script src="js/bionic-eye-3d.js"></script>
+
+    <!-- Master orchestrator -->
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // Phase 1: 3D eye fills the screen
+        const eye3d = new BionicEye3D('eye-3d-fullscreen');
+        const vision = new BionicVision();
+        let graphs = null;
+        let perception = null;
+
+        // Click lens on 3D model -> start camera -> transition to split view
+        eye3d.onLensClick = async () => {
+            document.getElementById('hero-text').style.opacity = '0';
+            document.getElementById('hero-text').style.transform = 'translateY(-20px)';
+
+            // Start camera
+            const started = await vision.startCamera();
+            if (started) {
+                eye3d.setVideoSource(vision.video);
+            }
+
+            document.getElementById('hero-status').classList.remove('hidden');
+
+            // Wait a beat then transition to split view
+            setTimeout(() => transitionToSplit(), 2000);
+        };
+
+        function transitionToSplit() {
+            const heroPhase = document.getElementById('hero-phase');
+            const splitPhase = document.getElementById('split-phase');
+
+            // Fade out hero
+            heroPhase.style.transition = 'opacity 0.8s ease, transform 0.8s ease';
+            heroPhase.style.opacity = '0';
+            heroPhase.style.transform = 'scale(0.95)';
+
+            setTimeout(() => {
+                heroPhase.classList.add('hidden');
+                splitPhase.classList.remove('hidden');
+                splitPhase.style.opacity = '0';
+                splitPhase.style.transform = 'translateY(20px)';
+
+                // Move 3D renderer to the split container
+                const splitContainer = document.getElementById('split-model-container');
+                const renderer = eye3d.renderer.domElement;
+                splitContainer.appendChild(renderer);
+                eye3d.container = splitContainer;
+                eye3d.onResize();
+
+                // Start copying processing results to the vertical pipeline canvases
+                startPipelineMirror();
+
+                // Start perception + graphs
+                perception = new PerceptionSimulator(vision);
+                graphs = new NeuralGraphs(vision);
+
+                requestAnimationFrame(() => {
+                    splitPhase.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+                    splitPhase.style.opacity = '1';
+                    splitPhase.style.transform = 'translateY(0)';
+                });
+            }, 800);
+        }
+
+        // Mirror the hidden processing canvases to the visible pipeline canvases
+        function startPipelineMirror() {
+            const pairs = [
+                ['canvas-raw', 'pv-canvas-raw'],
+                ['canvas-edge', 'pv-canvas-edge'],
+                ['canvas-enhance', 'pv-canvas-enhance'],
+                ['canvas-objects', 'pv-canvas-objects'],
+                ['canvas-neural', 'pv-canvas-neural'],
+            ];
+
+            function mirror() {
+                pairs.forEach(([srcId, dstId]) => {
+                    const src = document.getElementById(srcId);
+                    const dst = document.getElementById(dstId);
+                    if (!src || !dst) return;
+
+                    dst.width = src.width;
+                    dst.height = src.height;
+                    const ctx = dst.getContext('2d');
+                    try {
+                        // For the raw stage, draw video if available
+                        if (srcId === 'canvas-raw' && vision.video && vision.video.readyState >= 2) {
+                            ctx.drawImage(vision.video, 0, 0, dst.width, dst.height);
+                        } else {
+                            ctx.drawImage(src, 0, 0);
+                        }
+                    } catch(e) {}
+                });
+                requestAnimationFrame(mirror);
+            }
+            mirror();
+        }
+
+        // Event delegation: catches clicks on any canvas in the pipeline,
+        // even if it's added/initialized after page load (like the graph)
+        document.addEventListener('click', (e) => {
+            const canvas = e.target.closest('.pv-canvas, .output-canvas, .graph-canvas');
+            if (canvas && canvas.tagName === 'CANVAS') {
+                e.stopPropagation();
+                expandCanvas(canvas);
+            }
+        });
+
+        // Set cursor on existing matches (and re-apply when new canvases appear)
+        const setCursors = () => {
+            document.querySelectorAll('.pv-canvas, .output-canvas, .graph-canvas').forEach(c => {
+                c.style.cursor = 'pointer';
+            });
+        };
+        setCursors();
+        // Re-apply when split-phase becomes visible
+        new MutationObserver(setCursors).observe(document.body, { childList: true, subtree: true });
+
+        function expandCanvas(sourceCanvas) {
+            const overlay = document.getElementById('expand-overlay');
+            const target = document.getElementById('expand-canvas');
+            const ctx = target.getContext('2d');
+
+            // Source canvas dimensions — fall back to client size if internal size is 0
+            const srcW = sourceCanvas.width || sourceCanvas.clientWidth || 320;
+            const srcH = sourceCanvas.height || sourceCanvas.clientHeight || 240;
+            const aspect = srcW / srcH;
+
+            // Fit within viewport
+            const maxW = window.innerWidth * 0.9;
+            const maxH = window.innerHeight * 0.8;
+
+            let w = Math.min(960, maxW);
+            let h = w / aspect;
+            if (h > maxH) {
+                h = maxH;
+                w = h * aspect;
+            }
+
+            target.width = w;
+            target.height = h;
+
+            overlay.classList.remove('hidden');
+
+            function copyFrame() {
+                if (overlay.classList.contains('hidden')) return;
+                try {
+                    ctx.fillStyle = '#020408';
+                    ctx.fillRect(0, 0, target.width, target.height);
+                    ctx.drawImage(sourceCanvas, 0, 0, target.width, target.height);
+                } catch(e) { /* drawImage can throw if source is empty */ }
+                requestAnimationFrame(copyFrame);
+            }
+            copyFrame();
+
+            overlay.onclick = () => overlay.classList.add('hidden');
+        }
+
+        // Controls
+        document.getElementById('btn-cycle-mode').addEventListener('click', () => vision.cycleMode());
+        document.getElementById('btn-toggle-processing').addEventListener('click', () => {
+            vision.toggleProcessing();
+            const btn = document.getElementById('btn-toggle-processing');
+            const paused = !vision.processing;
+            btn.innerHTML = paused ? '<i class="fas fa-play"></i> Resume' : '<i class="fas fa-pause"></i> Pause';
+        });
+
+        // Also allow clicking the Start Camera text in hero if model click detection fails
+        document.getElementById('hero-text')?.addEventListener('click', () => {
+            if (eye3d.onLensClick) eye3d.onLensClick();
+        });
+    });
+    </script>
+</body>
+</html>

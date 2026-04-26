@@ -57,6 +57,9 @@
                 <button id="btn-start" class="btn-primary">
                     <i class="fas fa-play"></i> Begin Simulation
                 </button>
+                <a href="bionic-eye.html" class="btn-secondary" style="text-decoration:none;">
+                    <i class="fas fa-microchip"></i> Bionic Eye
+                </a>
                 <a href="ar.html" class="btn-secondary" style="text-decoration:none;">
                     <i class="fas fa-mobile-alt"></i> AR Mode
                 </a>
@@ -83,7 +86,13 @@
                 <div class="surgery-title">Phacoemulsification Cataract Surgery</div>
             </div>
             <div class="top-bar-right">
-                <button id="btn-toggle-complications" class="btn-icon" title="Toggle Complications View">
+                <button id="btn-pause" class="btn-icon" title="Pause / Resume (P)">
+                    <i class="fas fa-pause"></i>
+                </button>
+                <button id="btn-audio" class="btn-icon" title="Toggle Audio">
+                    <i class="fas fa-volume-up"></i>
+                </button>
+                <button id="btn-toggle-complications" class="btn-icon" title="Toggle Complications (C)">
                     <i class="fas fa-exclamation-triangle"></i>
                 </button>
                 <button id="btn-toggle-labels" class="btn-icon active" title="Toggle Labels">
@@ -92,7 +101,7 @@
                 <button id="btn-reset-view" class="btn-icon" title="Reset Camera">
                     <i class="fas fa-sync-alt"></i>
                 </button>
-                <a href="ar.html" class="btn-icon" title="AR Mode" style="text-decoration:none;">
+                <a href="ar.html" id="btn-ar" class="btn-icon" title="AR Mode" style="text-decoration:none;">
                     <i class="fas fa-mobile-alt"></i>
                 </a>
                 <button id="btn-enter-vr" class="btn-icon" title="Enter VR" style="display:none;">
@@ -192,6 +201,8 @@
     <script src="js/surgery-data.js"></script>
     <script src="js/eye-model.js"></script>
     <script src="js/surgical-tools.js"></script>
+    <script src="js/environment.js"></script>
+    <script src="js/audio-system.js"></script>
     <script src="js/animations.js"></script>
     <script src="js/draggable-cards.js"></script>
     <script src="js/ui-controller.js"></script>

@@ -25,6 +25,9 @@ class SurgeryAnimations {
         this.tools.hideAll();
         this.currentSubStep = 0;
 
+        // Compute anatomical anchors so animations land in the right spot
+        this.computeAnchors();
+
         switch (stepId) {
             case 0: return this.buildPrepSubSteps(camera, controls);
             case 1: return this.buildIncisionSubSteps(camera, controls);
@@ -60,10 +63,79 @@ class SurgeryAnimations {
         this.isShowingComplication = false;
     }
 
+    /* ---- Get lens radius from the loaded model (for sizing rings/grooves) ---- */
+    getLensRadius() {
+        const lensBox = this.eye.getPartBox('lens');
+        if (!lensBox) return 0.22;
+        const size = lensBox.getSize(new THREE.Vector3());
+        return Math.min(size.x, size.y) * 0.4;
+    }
+
+    /* ---- Compute anatomical anchor positions from the loaded eye model ---- */
+    computeAnchors() {
+        const ec = this.eye.getEyeCenter();
+        const cc = this.eye.getCorneaCenter();
+        const lc = this.eye.getLensCenter();
+        const lim = this.eye.getLimbusPosition('temporal');
+        const lensFront = this.eye.getLensAnterior();
+
+        // Optical axis direction (cornea -> back of eye)
+        const opticalAxis = new THREE.Vector3().subVectors(cc, ec).normalize();
+        // If lens is at center, fall back to z-forward
+        if (opticalAxis.length() < 0.1) opticalAxis.set(0, 0, 1);
+
+        // Approach direction: from temporal side, slightly above
+        const approachDir = new THREE.Vector3(1, 0.3, 0.5).normalize();
+
+        this.anchors = {
+            eyeCenter: ec,
+            corneaCenter: cc,
+            lensCenter: lc,
+            lensFront: lensFront,
+            limbus: lim,
+            opticalAxis,
+            // Where tools start their approach
+            approachStart: lim.clone().add(approachDir.clone().multiplyScalar(2.0)),
+            // Where the tool tip rests AT the limbus (entering the eye)
+            limbusEntry: lim.clone().add(approachDir.clone().multiplyScalar(0.05)),
+            // Inside the anterior chamber (between cornea and lens)
+            anteriorChamber: cc.clone().lerp(lc, 0.4),
+            // On top of the lens capsule (where capsulorhexis happens)
+            capsuleFront: lensFront,
+            // Approach exit (away from eye)
+            exitPoint: lim.clone().add(approachDir.clone().multiplyScalar(3.0)),
+        };
+
+        console.log('Surgical anchors:', {
+            cornea: this.anchors.corneaCenter.toArray().map(n => n.toFixed(2)),
+            lens: this.anchors.lensCenter.toArray().map(n => n.toFixed(2)),
+            limbus: this.anchors.limbus.toArray().map(n => n.toFixed(2)),
+        });
+    }
+
+    /* ---- Place an object at an anchor point (with optional offset) ---- */
+    placeAt(anchorName, offset) {
+        const a = this.anchors?.[anchorName];
+        if (!a) return new THREE.Vector3();
+        const result = a.clone();
+        if (offset) result.add(new THREE.Vector3(offset.x || 0, offset.y || 0, offset.z || 0));
+        return result;
+    }
+
     /* ---- Helper: animate camera smoothly ---- */
     cam(tl, camera, controls, pos, target, dur = 1.2, at = 0) {
         tl.to(camera.position, { x: pos.x, y: pos.y, z: pos.z, duration: dur, ease: "power2.inOut" }, at);
         tl.to(controls.target, { x: target.x, y: target.y, z: target.z, duration: dur, ease: "power2.inOut", onUpdate: () => controls.update() }, at);
+    }
+
+    /* ---- Camera focused on the eye (uses anchors so it's always centered correctly) ---- */
+    camFocus(tl, camera, controls, offset, dur = 1.2, at = 0) {
+        if (!this.anchors) return;
+        const target = this.anchors.corneaCenter.clone();
+        const pos = target.clone().add(new THREE.Vector3(
+            offset.x || 0, offset.y || 0.5, (offset.z || 3.5)
+        ));
+        this.cam(tl, camera, controls, pos, target, dur, at);
     }
 
     /* ---- Create a glowing wound/cut on the eye ---- */
@@ -316,43 +388,51 @@ class SurgeryAnimations {
     }
 
     /* ============================================
-       STEP 1: CORNEAL INCISION
+       STEP 1: CORNEAL INCISION (anchored to actual model)
        ============================================ */
     buildIncisionSubSteps(camera, controls) {
         const steps = [];
         const fade = () => { this.eye.setPartOpacity('eyelid', 0.1); this.eye.setPartOpacity('skin', 0.1); };
+        const A = this.anchors; // anchored positions
 
-        // Sub 0: Keratome approaches & CUTS
+        // Sub 0: Keratome approaches & CUTS at the limbus
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(fade, 0);
-            this.cam(tl, camera, controls, { x: 2.5, y: 1, z: 3 }, { x: 0.3, y: 0, z: 0.5 });
+            this.camFocus(tl, camera, controls, { x: 1.5, y: 0.5, z: 3 });
+
+            // Position keratome AT the actual limbus
+            const start = A.approachStart;
+            const entry = A.limbusEntry;
+            const cutDeep = A.limbus.clone().add(new THREE.Vector3(0, 0, -0.05)); // push into cornea
 
             const keratome = this.toolEnter(tl, 'keratome',
-                { x: 3.5, y: 0.5, z: 1.5 }, { x: 1.4, y: 0.05, z: 1.0 },
+                start, entry,
                 { z: -Math.PI / 2 }, 0.8
             );
 
-            // Keratome PUSHES INTO cornea — visible penetration
-            tl.to(keratome.position, { x: 0.7, y: 0, z: 0.88, duration: 1.8, ease: "power1.inOut" }, 2.0);
+            // Push blade INTO cornea
+            tl.to(keratome.position, { x: cutDeep.x, y: cutDeep.y, z: cutDeep.z,
+                duration: 1.8, ease: "power1.inOut" }, 2.0);
 
-            // CONTACT FLASH when blade touches
+            // CONTACT FLASH AT THE LIMBUS
             tl.add(() => {
-                const flash = this.createContactFlash(0.9, 0, 0.95, 0xff4444);
-                gsap.to(flash.scale, { x: 2, y: 2, z: 2, duration: 0.3 });
+                const flash = this.createContactFlash(A.limbus.x, A.limbus.y, A.limbus.z, 0xff4444);
+                gsap.to(flash.scale, { x: 3, y: 3, z: 3, duration: 0.3 });
                 gsap.to(flash.material, { opacity: 0, duration: 0.5 });
             }, 2.5);
 
-            // WOUND APPEARS on cornea
-            const wound = this.createWound(0.5, 0, 0.9, 0.15, 0.05);
+            // WOUND ON THE CORNEA at the limbus position
+            const wound = this.createWound(A.limbus.x, A.limbus.y, A.limbus.z + 0.02, 0.18, 0.06);
+            wound.lookAt(A.eyeCenter); // orient wound toward eye center
             this.animateWoundOpen(tl, wound, 2.8, 1.0);
 
-            // Tissue spray at incision
+            // Tissue spray at incision position
             tl.add(() => {
-                this.createSpray(new THREE.Vector3(0.6, 0, 0.92), 15, 0xffaaaa, 0.15);
+                this.createSpray(A.limbus.clone().add(new THREE.Vector3(0, 0, 0.05)), 20, 0xff8888, 0.18);
             }, 2.8);
 
-            // Cornea reacts — slight deformation
+            // Cornea responds visually
             this.eye.getPart('cornea').forEach(m => {
                 if (m.material) {
                     tl.to(m.material, { opacity: 0.22, duration: 0.3 }, 2.8);
@@ -360,89 +440,104 @@ class SurgeryAnimations {
                 }
             });
 
-            // Keratome pushes through to create tunnel
-            tl.to(keratome.position, { x: 0.4, duration: 1.0, ease: "power1.in" }, 3.5);
-
-            // Wound widens
-            tl.to(wound.scale, { x: 1.5, duration: 0.8 }, 3.5);
-
             // Withdraw blade
-            this.toolExit(tl, 'keratome', { x: 3.5, y: 0.5, z: 1.5 }, 4.8);
+            this.toolExit(tl, 'keratome', A.exitPoint, 4.5);
 
-            steps.push({ timeline: tl, label: "Main Corneal Incision", description: "Keratome blade penetrates the cornea at the limbus creating a 2.4mm self-sealing tunnel. Watch the blade push through and the wound open.", icon: "fa-cut" });
+            steps.push({ timeline: tl, label: "Main Corneal Incision", description: "Keratome blade enters at the temporal limbus (cornea-sclera junction) and creates a 2.4mm self-sealing tunnel. Watch the blade reach the limbus and the wound open exactly there.", icon: "fa-cut" });
         })();
 
-        // Sub 1: Side-port cut
+        // Sub 1: Side-port cut at nasal limbus (opposite side)
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(fade, 0);
-            this.cam(tl, camera, controls, { x: -1.5, y: 1.5, z: 3 }, { x: -0.2, y: 0, z: 0.5 });
+
+            // Nasal side = opposite of temporal
+            const nasalLimbus = this.eye.getLimbusPosition('nasal');
+            const cornea = A.corneaCenter;
+            const camOffset = nasalLimbus.clone().sub(cornea).normalize().multiplyScalar(2.5);
+            this.cam(tl, camera, controls,
+                cornea.clone().add(camOffset).add(new THREE.Vector3(0, 0.5, 0.5)),
+                cornea.clone(), 1.0);
+
+            const approach = nasalLimbus.clone().add(new THREE.Vector3(-2, 0.5, 1));
+            const entry = nasalLimbus.clone().add(new THREE.Vector3(-0.05, 0.05, 0.05));
 
             const blade = this.toolEnter(tl, 'sideport_blade',
-                { x: -2.5, y: 1, z: 1.5 }, { x: -0.5, y: 0.2, z: 0.95 },
-                { y: Math.PI / 3, z: -Math.PI / 2 }, 0.7
+                approach, entry,
+                { y: Math.PI / 3, z: Math.PI / 2 }, 0.7
             );
 
-            // Stab in
-            tl.to(blade.position, { x: -0.25, y: 0.1, z: 0.88, duration: 0.6, ease: "power2.out" }, 2.0);
+            // Stab into nasal limbus
+            tl.to(blade.position, { x: nasalLimbus.x, y: nasalLimbus.y, z: nasalLimbus.z,
+                duration: 0.6, ease: "power2.out" }, 2.0);
 
             // Contact flash
             tl.add(() => {
-                const f = this.createContactFlash(-0.35, 0.15, 0.92, 0xff4444);
-                gsap.to(f.scale, { x: 1.5, y: 1.5, z: 1.5, duration: 0.3 });
+                const f = this.createContactFlash(nasalLimbus.x, nasalLimbus.y, nasalLimbus.z + 0.03, 0xff4444);
+                gsap.to(f.scale, { x: 1.8, y: 1.8, z: 1.8, duration: 0.3 });
                 gsap.to(f.material, { opacity: 0, duration: 0.5 });
             }, 2.3);
 
-            // Side wound
-            const sideWound = this.createWound(-0.3, 0.15, 0.9, 0.06, 0.03, Math.PI / 4);
+            // Side wound at the right place
+            const sideWound = this.createWound(nasalLimbus.x, nasalLimbus.y, nasalLimbus.z + 0.02, 0.06, 0.03, Math.PI / 4);
+            sideWound.lookAt(A.eyeCenter);
             this.animateWoundOpen(tl, sideWound, 2.3, 0.6);
 
-            tl.add(() => this.createSpray(new THREE.Vector3(-0.3, 0.15, 0.92), 10, 0xffaaaa, 0.1), 2.4);
+            tl.add(() => this.createSpray(nasalLimbus.clone().add(new THREE.Vector3(0,0,0.05)), 12, 0xffaaaa, 0.1), 2.4);
 
-            this.toolExit(tl, 'sideport_blade', { x: -2.5, y: 1, z: 1.5 }, 3.0);
+            this.toolExit(tl, 'sideport_blade', approach, 3.0);
 
-            steps.push({ timeline: tl, label: "Side-Port Incision", description: "A 1mm stab incision 90 degrees away. Provides access for the second instrument.", icon: "fa-slash" });
+            steps.push({ timeline: tl, label: "Side-Port Incision", description: "A 1mm stab incision at the nasal limbus (opposite side). Provides access for the second instrument during phaco.", icon: "fa-slash" });
         })();
 
-        // Sub 2: Inject viscoelastic (OVD fills chamber)
+        // Sub 2: Inject viscoelastic into anterior chamber
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(fade, 0);
-            this.cam(tl, camera, controls, { x: 1.5, y: 0.8, z: 3.5 }, { x: 0.1, y: 0, z: 0.3 });
+            this.camFocus(tl, camera, controls, { x: 1.5, y: 0.8, z: 3.5 });
+
+            // Syringe approaches through main incision
+            const start = A.approachStart;
+            const tipInChamber = A.anteriorChamber;
 
             const syringe = this.toolEnter(tl, 'syringe',
-                { x: 2.5, y: 0.5, z: 1.5 }, { x: 0.6, y: 0, z: 0.88 },
+                start, A.limbusEntry,
                 { x: 0.2, y: -0.3, z: -Math.PI / 2 }, 0.6
             );
 
-            // Syringe tip enters wound
-            tl.to(syringe.position, { x: 0.35, duration: 1.0, ease: "power1.inOut" }, 2.0);
+            tl.to(syringe.position, { x: tipInChamber.x, y: tipInChamber.y, z: tipInChamber.z,
+                duration: 1.0, ease: "power1.inOut" }, 2.0);
 
-            // Plunger pushes — fluid enters
+            // Plunger pushes
             const plunger = syringe.getObjectByName('plunger');
             if (plunger) tl.to(plunger.position, { y: 0.5, duration: 2.5 }, 2.5);
 
-            // VISIBLE: Anterior chamber FILLS — create expanding transparent sphere
-            const orvGeo = new THREE.SphereGeometry(0.01, 24, 24);
-            const orvMat = new THREE.MeshPhysicalMaterial({
-                color: 0xd0e8ff, transparent: true, opacity: 0, transmission: 0.6, roughness: 0, thickness: 0.5,
+            // Viscoelastic bubble FILLS the anterior chamber AT the right place
+            const ovdGeo = new THREE.SphereGeometry(0.01, 24, 24);
+            const ovdMat = new THREE.MeshPhysicalMaterial({
+                color: 0xd0e8ff, transparent: true, opacity: 0,
+                roughness: 0, metalness: 0,
             });
-            const ovdBubble = new THREE.Mesh(orvGeo, orvMat);
-            ovdBubble.position.set(0, 0, 0.7);
+            const ovdBubble = new THREE.Mesh(ovdGeo, ovdMat);
+            ovdBubble.position.copy(tipInChamber);
             this.scene.add(ovdBubble);
             this.dynamicObjects.push(ovdBubble);
 
-            tl.to(orvMat, { opacity: 0.25, duration: 1.0 }, 2.8);
-            tl.to(ovdBubble.scale, { x: 40, y: 40, z: 20, duration: 2.5, ease: "power1.out" }, 2.8);
+            tl.to(ovdMat, { opacity: 0.35, duration: 1.0 }, 2.8);
+            // Scale to fill the anterior chamber (size based on cornea-to-lens distance)
+            const acDist = A.corneaCenter.distanceTo(A.lensCenter);
+            const fillScale = (acDist / 0.01) * 0.4;
+            tl.to(ovdBubble.scale, { x: fillScale, y: fillScale, z: fillScale * 0.7,
+                duration: 2.5, ease: "power1.out" }, 2.8);
 
-            // Chamber deepens — anterior chamber part becomes visible
+            // Anterior chamber part becomes visible too
             this.eye.getPart('anterior_chamber').forEach(m => {
-                if (m.material) tl.to(m.material, { opacity: 0.2, duration: 1.5 }, 3.0);
+                if (m.material) tl.to(m.material, { opacity: 0.25, duration: 1.5 }, 3.0);
             });
 
-            this.toolExit(tl, 'syringe', { x: 2.5, y: 0.5, z: 1.5 }, 5.5);
+            this.toolExit(tl, 'syringe', A.exitPoint, 5.5);
 
-            steps.push({ timeline: tl, label: "Inject Viscoelastic (OVD)", description: "Gel-like viscoelastic fills the anterior chamber, inflating it to protect the cornea and create working space.", icon: "fa-syringe" });
+            steps.push({ timeline: tl, label: "Inject Viscoelastic (OVD)", description: "Gel-like viscoelastic injected through the corneal wound. Watch it fill the anterior chamber (between cornea and iris), inflating it to protect the cornea and create working space.", icon: "fa-syringe" });
         })();
 
         this.subStepTimelines = steps;
@@ -450,49 +545,55 @@ class SurgeryAnimations {
     }
 
     /* ============================================
-       STEP 2: CAPSULORHEXIS
+       STEP 2: CAPSULORHEXIS (anchored to actual lens)
        ============================================ */
     buildCapsulorhexisSubSteps(camera, controls) {
         const steps = [];
+        const A = this.anchors;
         const fade = () => {
             this.eye.setPartOpacity('eyelid', 0.05); this.eye.setPartOpacity('skin', 0.05);
             this.eye.setPartOpacity('cornea', 0.06); this.eye.setPartOpacity('sclera', 0.3);
         };
 
-        // Sub 0: Stain capsule blue
+        // Lens size for sizing the tear ring properly
+        const lensBox = this.eye.getPartBox('lens');
+        const lensRadius = lensBox ? Math.min(lensBox.getSize(new THREE.Vector3()).x, lensBox.getSize(new THREE.Vector3()).y) * 0.35 : 0.22;
+
+        // Sub 0: Stain capsule blue (dye lands ON the lens)
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(fade, 0);
-            this.cam(tl, camera, controls, { x: 0, y: 2.5, z: 3 }, { x: 0, y: 0, z: 0.3 });
+            this.camFocus(tl, camera, controls, { x: 0, y: 2, z: 2.8 });
 
-            // Syringe injects blue dye
             const syringe = this.toolEnter(tl, 'syringe',
-                { x: 2, y: 1, z: 1.5 }, { x: 0.4, y: 0, z: 0.75 },
+                A.approachStart, A.anteriorChamber,
                 { x: 0.2, y: -0.3, z: -Math.PI / 2 }, 0.5
             );
 
-            // Blue dye spreads across lens surface
+            // Blue dye spreads across lens FRONT (capsule)
             const dyeGeo = new THREE.CircleGeometry(0.01, 32);
             const dyeMat = new THREE.MeshBasicMaterial({
                 color: 0x1a3db3, side: THREE.DoubleSide, transparent: true, opacity: 0,
             });
             const dye = new THREE.Mesh(dyeGeo, dyeMat);
-            dye.position.set(0, 0, 0.63);
+            dye.position.copy(A.lensFront);
+            // Orient dye disc to face the camera/cornea
+            dye.lookAt(A.corneaCenter);
             this.scene.add(dye);
             this.dynamicObjects.push(dye);
 
-            tl.to(dyeMat, { opacity: 0.6, duration: 1.0 }, 2.5);
-            tl.to(dye.scale, { x: 35, y: 35, duration: 2.0, ease: "power1.out" }, 2.5);
+            tl.to(dyeMat, { opacity: 0.65, duration: 1.0 }, 2.5);
+            tl.to(dye.scale, { x: lensRadius * 100, y: lensRadius * 100, duration: 2.0, ease: "power1.out" }, 2.5);
 
-            // Lens turns blue-ish
+            // Lens itself turns blue
             this.eye.getPart('lens').forEach(m => {
-                if (m.material?.color) tl.to(m.material.color, { r: 0.15, g: 0.25, b: 0.65, duration: 2.0 }, 2.5);
-                if (m.material) tl.to(m.material, { opacity: 0.75, duration: 1.5 }, 2.5);
+                if (m.material?.color) tl.to(m.material.color, { r: 0.15, g: 0.25, b: 0.7, duration: 2.0 }, 2.5);
+                if (m.material) tl.to(m.material, { opacity: 0.85, duration: 1.5 }, 2.5);
             });
 
-            this.toolExit(tl, 'syringe', { x: 2, y: 1, z: 1.5 }, 4.5);
+            this.toolExit(tl, 'syringe', A.exitPoint, 4.5);
 
-            steps.push({ timeline: tl, label: "Trypan Blue Staining", description: "Blue dye injected — watch it spread across the lens capsule, making the transparent membrane visible for the next step.", icon: "fa-tint" });
+            steps.push({ timeline: tl, label: "Trypan Blue Staining", description: "Blue dye injected onto the lens capsule. Watch it spread across the front of the lens, making the transparent membrane visible for the circular tear.", icon: "fa-tint" });
         })();
 
         // Sub 1: Cystotome PUNCTURES capsule
@@ -508,36 +609,42 @@ class SurgeryAnimations {
             }, 0);
 
             const cystotome = this.toolEnter(tl, 'cystotome',
-                { x: 2, y: 0.5, z: 1.5 }, { x: 0.5, y: 0, z: 0.75 },
+                A.approachStart, A.anteriorChamber,
                 { y: -0.5, z: -Math.PI / 2 }, 0.7
             );
 
-            // STAB — quick jab into capsule
-            tl.to(cystotome.position, { x: 0.15, y: -0.02, z: 0.63, duration: 0.25, ease: "power3.out" }, 2.3);
+            // STAB into the lens front (capsule)
+            tl.to(cystotome.position, { x: A.lensFront.x, y: A.lensFront.y, z: A.lensFront.z,
+                duration: 0.25, ease: "power3.out" }, 2.3);
 
-            // PUNCTURE FLASH
+            // PUNCTURE FLASH AT THE LENS
             tl.add(() => {
-                const f = this.createContactFlash(0.15, 0, 0.65, 0xff2222);
-                gsap.to(f.scale, { x: 2, y: 2, z: 2, duration: 0.2 });
+                const f = this.createContactFlash(A.lensFront.x, A.lensFront.y, A.lensFront.z, 0xff2222);
+                gsap.to(f.scale, { x: 2.5, y: 2.5, z: 2.5, duration: 0.2 });
                 gsap.to(f.material, { opacity: 0, duration: 0.4 });
-                this.createSpray(new THREE.Vector3(0.15, 0, 0.65), 8, 0x3355cc, 0.08);
+                this.createSpray(A.lensFront.clone(), 10, 0x3355cc, 0.08);
             }, 2.4);
 
-            // Puncture hole appears
+            // Puncture hole AT the lens front
             const holeGeo = new THREE.CircleGeometry(0.025, 16);
             const holeMat = new THREE.MeshBasicMaterial({ color: 0x0a0a1a, side: THREE.DoubleSide, transparent: true, opacity: 0 });
             const hole = new THREE.Mesh(holeGeo, holeMat);
-            hole.position.set(0.12, 0, 0.64);
+            hole.position.copy(A.lensFront);
+            hole.lookAt(A.corneaCenter);
             this.scene.add(hole);
             this.dynamicObjects.push(hole);
             tl.to(holeMat, { opacity: 0.9, duration: 0.3 }, 2.5);
 
-            // Needle tip drags to initiate flap
-            tl.to(cystotome.position, { x: 0.05, y: 0.08, duration: 0.8, ease: "power1.inOut" }, 2.8);
+            // Needle drags slightly to initiate the flap
+            tl.to(cystotome.position, {
+                x: A.lensFront.x - 0.05,
+                y: A.lensFront.y + 0.08,
+                duration: 0.8, ease: "power1.inOut"
+            }, 2.8);
 
-            this.toolExit(tl, 'cystotome', { x: 2, y: 0.5, z: 1.5 }, 3.8);
+            this.toolExit(tl, 'cystotome', A.exitPoint, 3.8);
 
-            steps.push({ timeline: tl, label: "Puncture Capsule", description: "Cystotome needle stabs through the anterior capsule — see the puncture hole appear and the initial tear begin.", icon: "fa-crosshairs" });
+            steps.push({ timeline: tl, label: "Puncture Capsule", description: "Cystotome needle stabs through the anterior lens capsule — the puncture appears exactly on the front surface of the lens.", icon: "fa-crosshairs" });
         })();
 
         // Sub 2: Forceps tear circular opening
@@ -552,79 +659,82 @@ class SurgeryAnimations {
             }, 0);
 
             const forceps = this.toolEnter(tl, 'forceps',
-                { x: 2, y: 0.3, z: 1.2 }, { x: 0.3, y: 0, z: 0.68 },
+                A.approachStart, A.lensFront,
                 { y: -0.3 }, 0.5
             );
 
-            // CREATE VISIBLE CIRCULAR TEAR — each dot appears as forceps move around
-            const tearRadius = 0.22;
+            // Build orientation basis at lens front so the ring lays ON the lens
+            const normal = new THREE.Vector3().subVectors(A.corneaCenter, A.lensCenter).normalize();
+            const upTmp = Math.abs(normal.y) > 0.9 ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,1,0);
+            const right = new THREE.Vector3().crossVectors(normal, upTmp).normalize();
+            const up = new THREE.Vector3().crossVectors(right, normal).normalize();
+            const center = A.lensFront;
+
+            const tearRadius = lensRadius;
             const totalDots = 50;
             const tearDuration = 4.0;
 
             for (let i = 0; i < totalDots; i++) {
                 const angle = (i / totalDots) * Math.PI * 2;
+                // Position each dot on the lens-front plane
+                const offsetVec = right.clone().multiplyScalar(Math.cos(angle) * tearRadius)
+                    .add(up.clone().multiplyScalar(Math.sin(angle) * tearRadius));
+                const dotPos = center.clone().add(offsetVec);
 
-                // Tear dot (visible rip in capsule)
                 const dot = new THREE.Mesh(
-                    new THREE.CircleGeometry(0.01, 8),
+                    new THREE.CircleGeometry(0.012, 8),
                     new THREE.MeshBasicMaterial({ color: 0xff3333, side: THREE.DoubleSide, transparent: true, opacity: 0 })
                 );
-                dot.position.set(Math.cos(angle) * tearRadius, Math.sin(angle) * tearRadius, 0.635);
+                dot.position.copy(dotPos);
+                dot.lookAt(A.corneaCenter);
                 this.scene.add(dot);
                 this.dynamicObjects.push(dot);
 
                 const t = 2.0 + (i / totalDots) * tearDuration;
-                tl.to(dot.material, { opacity: 0.9, duration: 0.1 }, t);
+                tl.to(dot.material, { opacity: 0.95, duration: 0.1 }, t);
 
-                // Move forceps tip along circle
+                // Move forceps tip along the actual circle
                 if (i % 5 === 0) {
                     tl.to(forceps.position, {
-                        x: 0.1 + Math.cos(angle) * tearRadius * 0.5,
-                        y: Math.sin(angle) * tearRadius * 0.5,
-                        z: 0.66,
-                        duration: tearDuration / 10,
-                        ease: "none",
+                        x: dotPos.x, y: dotPos.y, z: dotPos.z,
+                        duration: tearDuration / 10, ease: "none",
                     }, t);
                 }
 
-                // Mini sparks along tear
                 if (i % 8 === 0) {
                     tl.add(() => {
-                        const spark = this.createContactFlash(
-                            Math.cos(angle) * tearRadius,
-                            Math.sin(angle) * tearRadius,
-                            0.65, 0xff4444
-                        );
-                        gsap.to(spark.scale, { x: 1.5, y: 1.5, z: 1.5, duration: 0.2 });
+                        const spark = this.createContactFlash(dotPos.x, dotPos.y, dotPos.z, 0xff4444);
+                        gsap.to(spark.scale, { x: 1.8, y: 1.8, z: 1.8, duration: 0.2 });
                         gsap.to(spark.material, { opacity: 0, duration: 0.3 });
                     }, t);
                 }
             }
 
-            // Circular opening (dark center visible)
+            // Dark circular opening AT the lens front
             const openingGeo = new THREE.CircleGeometry(tearRadius - 0.015, 48);
             const openingMat = new THREE.MeshBasicMaterial({
                 color: 0x0a0a15, side: THREE.DoubleSide, transparent: true, opacity: 0,
             });
             const opening = new THREE.Mesh(openingGeo, openingMat);
-            opening.position.set(0, 0, 0.633);
+            opening.position.copy(center);
+            opening.lookAt(A.corneaCenter);
             this.scene.add(opening);
             this.dynamicObjects.push(opening);
+            tl.to(openingMat, { opacity: 0.85, duration: 1.0 }, 5.5);
 
-            tl.to(openingMat, { opacity: 0.75, duration: 1.0 }, 5.5);
-
-            // Glow ring around completed opening
+            // Glowing ring around the opening (highlights the completed tear)
             const glowRing = new THREE.Mesh(
                 new THREE.RingGeometry(tearRadius - 0.02, tearRadius + 0.02, 48),
                 new THREE.MeshBasicMaterial({ color: 0x00d4aa, side: THREE.DoubleSide, transparent: true, opacity: 0 })
             );
-            glowRing.position.set(0, 0, 0.636);
+            glowRing.position.copy(center);
+            glowRing.lookAt(A.corneaCenter);
             this.scene.add(glowRing);
             this.dynamicObjects.push(glowRing);
-            tl.to(glowRing.material, { opacity: 0.5, duration: 0.5 }, 6.0);
-            tl.to(glowRing.material, { opacity: 0.15, duration: 1.0 }, 6.5);
+            tl.to(glowRing.material, { opacity: 0.6, duration: 0.5 }, 6.0);
+            tl.to(glowRing.material, { opacity: 0.2, duration: 1.0 }, 6.5);
 
-            this.toolExit(tl, 'forceps', { x: 2, y: 0.3, z: 1.2 }, 6.5);
+            this.toolExit(tl, 'forceps', A.exitPoint, 6.5);
 
             steps.push({ timeline: tl, label: "Tear Circular Opening", description: "Forceps grip the capsule flap and tear it in a perfect circle. Watch each point of the tear appear as the instrument moves around.", icon: "fa-circle-notch" });
         })();
@@ -634,162 +744,173 @@ class SurgeryAnimations {
     }
 
     /* ============================================
-       STEP 3: PHACOEMULSIFICATION
+       STEP 3: PHACOEMULSIFICATION (anchored)
        ============================================ */
     buildPhacoSubSteps(camera, controls) {
         const steps = [];
+        const A = this.anchors;
         const fade = () => {
             this.eye.setPartOpacity('eyelid', 0.05); this.eye.setPartOpacity('skin', 0.05);
             this.eye.setPartOpacity('cornea', 0.05); this.eye.setPartOpacity('sclera', 0.18);
         };
 
-        // Sub 0: Hydrodissection
+        // Sub 0: Hydrodissection — fluid jet separates lens from capsule
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(fade, 0);
-            this.cam(tl, camera, controls, { x: 1, y: 1.5, z: 3.5 }, { x: 0, y: 0, z: 0.2 });
+            this.camFocus(tl, camera, controls, { x: 1, y: 1.5, z: 3 });
 
             const cannula = this.toolEnter(tl, 'cannula',
-                { x: 2.5, y: 0.5, z: 1.2 }, { x: 0.4, y: 0, z: 0.68 },
+                A.approachStart, A.lensFront,
                 { y: -0.3, z: -Math.PI / 2 }, 0.7
             );
 
-            // Fluid wave — lens jumps up
+            // Fluid wave AT the lens position
             const lens = this.eye.getPart('lens');
             tl.add(() => {
-                const wave = this.createContactFlash(0.1, 0, 0.6, 0x88ccff);
-                gsap.to(wave.scale, { x: 5, y: 5, z: 2, duration: 0.5 });
+                const wave = this.createContactFlash(A.lensFront.x, A.lensFront.y, A.lensFront.z, 0x88ccff);
+                gsap.to(wave.scale, { x: 6, y: 6, z: 3, duration: 0.5 });
                 gsap.to(wave.material, { opacity: 0, duration: 0.8 });
             }, 2.5);
 
+            // Lens physically bounces
+            const lensJumpDir = A.opticalAxis.clone().multiplyScalar(0.1);
             lens.forEach(m => {
-                tl.to(m.position, { z: "+=0.1", duration: 0.4, ease: "power2.out" }, 2.5);
-                tl.to(m.position, { z: "-=0.06", duration: 0.3, ease: "bounce.out" }, 2.9);
+                const orig = m.position.clone();
+                tl.to(m.position, { x: orig.x + lensJumpDir.x, y: orig.y + lensJumpDir.y, z: orig.z + lensJumpDir.z,
+                    duration: 0.4, ease: "power2.out" }, 2.5);
+                tl.to(m.position, { x: orig.x, y: orig.y, z: orig.z, duration: 0.4, ease: "bounce.out" }, 2.9);
             });
 
-            this.toolExit(tl, 'cannula', { x: 2.5, y: 0.5, z: 1.2 }, 3.5);
+            this.toolExit(tl, 'cannula', A.exitPoint, 3.5);
 
-            steps.push({ timeline: tl, label: "Hydrodissection", description: "Fluid wave separates the lens from the capsule. Watch the lens physically bounce as the fluid jet hits underneath.", icon: "fa-water" });
+            steps.push({ timeline: tl, label: "Hydrodissection", description: "Fluid wave injected under the lens capsule. Watch the lens physically bounce at its actual position as the fluid jet separates it from the capsule.", icon: "fa-water" });
         })();
 
-        // Sub 1: Phaco sculpts grooves & BREAKS lens
+        // Sub 1: Phaco sculpts grooves AT the lens & BREAKS it
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(fade, 0);
-            this.cam(tl, camera, controls, { x: 0.5, y: 2.2, z: 2.8 }, { x: 0, y: 0, z: 0.15 });
+            this.camFocus(tl, camera, controls, { x: 0.5, y: 2, z: 2.8 });
 
             const phaco = this.toolEnter(tl, 'phaco_probe',
-                { x: 2.5, y: 1, z: 1.5 }, { x: 0.5, y: 0.05, z: 0.65 },
+                A.approachStart, A.lensFront,
                 { x: Math.PI, z: Math.PI / 4 }, 0.5
             );
 
-            // VISIBLE VIBRATION on probe
-            tl.to(phaco.position, { x: "+=0.005", duration: 0.025, yoyo: true, repeat: 200, ease: "none" }, 2.0);
+            // Position phaco tip on the lens
+            tl.to(phaco.position, { x: A.lensCenter.x, y: A.lensCenter.y, z: A.lensCenter.z,
+                duration: 0.5 }, 1.8);
 
-            // Vibe indicator glows
+            // Visible vibration
+            tl.to(phaco.position, { x: "+=0.008", duration: 0.025, yoyo: true, repeat: 200, ease: "none" }, 2.0);
+
             const vibe = phaco.getObjectByName('vibe_indicator');
             if (vibe) tl.to(vibe.material, { opacity: 1, duration: 0.1, yoyo: true, repeat: 50 }, 2.0);
 
-            // SCULPT GROOVE 1 (vertical line appearing on lens surface)
+            // Build orientation basis at lens for groove orientation
+            const normal = A.opticalAxis.clone();
+            const upTmp = Math.abs(normal.y) > 0.9 ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,1,0);
+            const right = new THREE.Vector3().crossVectors(normal, upTmp).normalize();
+            const up = new THREE.Vector3().crossVectors(right, normal).normalize();
+            const grooveSize = this.getLensRadius() * 1.4;
+
+            // GROOVE 1 (vertical) AT the lens
             const groove1 = new THREE.Mesh(
-                new THREE.PlaneGeometry(0.005, 0.3),
+                new THREE.PlaneGeometry(0.008, grooveSize),
                 new THREE.MeshBasicMaterial({ color: 0x442200, side: THREE.DoubleSide, transparent: true, opacity: 0 })
             );
-            groove1.position.set(0, 0, 0.56);
+            groove1.position.copy(A.lensFront);
+            groove1.lookAt(A.corneaCenter);
             this.scene.add(groove1);
             this.dynamicObjects.push(groove1);
-            tl.to(groove1.material, { opacity: 0.9, duration: 1.5 }, 2.5);
+            tl.to(groove1.material, { opacity: 0.95, duration: 1.5 }, 2.5);
 
-            // Debris spraying as groove is cut
-            tl.add(() => this.createSpray(new THREE.Vector3(0, 0.05, 0.58), 20, 0xc8b88a, 0.15), 2.8);
-            tl.add(() => this.createSpray(new THREE.Vector3(0, -0.05, 0.58), 15, 0xc8b88a, 0.12), 3.3);
+            // Debris spraying
+            tl.add(() => this.createSpray(A.lensCenter.clone(), 25, 0xc8b88a, 0.18), 2.8);
+            tl.add(() => this.createSpray(A.lensCenter.clone(), 18, 0xc8b88a, 0.15), 3.3);
 
-            // SCULPT GROOVE 2 (horizontal)
+            // GROOVE 2 (horizontal)
             const groove2 = new THREE.Mesh(
-                new THREE.PlaneGeometry(0.3, 0.005),
+                new THREE.PlaneGeometry(grooveSize, 0.008),
                 new THREE.MeshBasicMaterial({ color: 0x442200, side: THREE.DoubleSide, transparent: true, opacity: 0 })
             );
-            groove2.position.set(0, 0, 0.56);
+            groove2.position.copy(A.lensFront);
+            groove2.lookAt(A.corneaCenter);
             this.scene.add(groove2);
             this.dynamicObjects.push(groove2);
-            tl.to(groove2.material, { opacity: 0.9, duration: 1.5 }, 4.0);
+            tl.to(groove2.material, { opacity: 0.95, duration: 1.5 }, 4.0);
 
-            tl.add(() => this.createSpray(new THREE.Vector3(0.05, 0, 0.58), 20, 0xc8b88a, 0.15), 4.5);
+            tl.add(() => this.createSpray(A.lensCenter.clone(), 22, 0xc8b88a, 0.16), 4.5);
 
-            // CRACK — lens splits into fragments
+            // CRACK — flash at lens center
             tl.add(() => {
-                // Flash at crack moment
-                const crack = this.createContactFlash(0, 0, 0.56, 0xffaa00);
-                gsap.to(crack.scale, { x: 4, y: 4, z: 4, duration: 0.3 });
+                const crack = this.createContactFlash(A.lensCenter.x, A.lensCenter.y, A.lensCenter.z, 0xffaa00);
+                gsap.to(crack.scale, { x: 5, y: 5, z: 5, duration: 0.3 });
                 gsap.to(crack.material, { opacity: 0, duration: 0.5 });
             }, 5.5);
 
-            // Original lens fades
+            // Lens fades
             this.eye.getPart('lens').forEach(m => {
                 if (m.material) tl.to(m.material, { opacity: 0.1, duration: 0.5 }, 5.5);
             });
 
-            // FRAGMENTS APPEAR
+            // FRAGMENTS APPEAR AT THE LENS
             const fragments = this.createLensFragments(8);
             fragments.forEach((frag, i) => {
+                frag.position.copy(A.lensCenter);
                 frag.material.opacity = 0;
                 const a = (i / fragments.length) * Math.PI * 2;
-                // Fragments burst apart
-                tl.to(frag.material, { opacity: 0.85, duration: 0.3 }, 5.6);
+                const burstOffset = right.clone().multiplyScalar(Math.cos(a) * 0.08)
+                    .add(up.clone().multiplyScalar(Math.sin(a) * 0.08));
+                tl.to(frag.material, { opacity: 0.9, duration: 0.3 }, 5.6);
                 tl.to(frag.position, {
-                    x: frag.position.x + Math.cos(a) * 0.08,
-                    y: frag.position.y + Math.sin(a) * 0.08,
-                    duration: 0.4,
-                    ease: "power2.out"
+                    x: A.lensCenter.x + burstOffset.x,
+                    y: A.lensCenter.y + burstOffset.y,
+                    z: A.lensCenter.z + burstOffset.z,
+                    duration: 0.4, ease: "power2.out"
                 }, 5.6);
             });
 
-            steps.push({ timeline: tl, label: "Sculpt & Crack Nucleus", description: "Phaco probe vibrates at ultrasonic speed, carving grooves into the lens. Then CRACK — the lens splits into fragments. Watch the debris spray.", icon: "fa-bolt" });
+            steps.push({ timeline: tl, label: "Sculpt & Crack Nucleus", description: "Phaco probe vibrates at ultrasonic speed AT the lens, carving grooves directly into it. Then CRACK — the lens splits into fragments at its actual position.", icon: "fa-bolt" });
         })();
 
-        // Sub 2: Emulsify and aspirate fragments
+        // Sub 2: Emulsify and aspirate — fragments sucked toward probe tip
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(fade, 0);
-            this.cam(tl, camera, controls, { x: 0, y: 2, z: 3.2 }, { x: 0, y: 0, z: 0 });
+            this.camFocus(tl, camera, controls, { x: 0, y: 2, z: 3 });
 
-            // Hide original lens, show fragments
             tl.add(() => this.eye.setPartVisibility('lens', false), 0);
 
             const fragments = this.createLensFragments(8);
+            // Fragments scattered around the lens center
+            fragments.forEach((frag, i) => {
+                const a = (i / fragments.length) * Math.PI * 2;
+                frag.position.copy(A.lensCenter).add(new THREE.Vector3(Math.cos(a) * 0.1, Math.sin(a) * 0.1, 0));
+            });
+
             const phaco = this.toolEnter(tl, 'phaco_probe',
-                { x: 2, y: 0.5, z: 1.2 }, { x: 0.4, y: 0, z: 0.6 },
+                A.approachStart, A.lensCenter,
                 { x: Math.PI, z: Math.PI / 4 }, 0.5
             );
 
-            // Vibrate probe
-            tl.to(phaco.position, { x: "+=0.005", duration: 0.025, yoyo: true, repeat: 300, ease: "none" }, 2.0);
+            tl.to(phaco.position, { x: "+=0.008", duration: 0.025, yoyo: true, repeat: 300, ease: "none" }, 2.0);
 
-            // Each fragment gets SUCKED toward probe tip and dissolves
+            // Each fragment SUCKED toward probe tip (lens center)
             fragments.forEach((frag, i) => {
                 const delay = 2.0 + i * 0.7;
-
-                // Fragment vibrates
-                tl.to(frag.position, { x: "+=0.01", duration: 0.03, yoyo: true, repeat: 15, ease: "none" }, delay);
-
-                // Fragment moves toward probe tip
+                tl.to(frag.position, { x: "+=0.012", duration: 0.03, yoyo: true, repeat: 15, ease: "none" }, delay);
                 tl.to(frag.position, {
-                    x: 0.35, y: 0, z: 0.62,
-                    duration: 0.6,
-                    ease: "power2.in",
+                    x: A.lensCenter.x, y: A.lensCenter.y, z: A.lensCenter.z,
+                    duration: 0.6, ease: "power2.in",
                 }, delay + 0.3);
-
-                // Fragment shrinks (emulsified)
                 tl.to(frag.scale, { x: 0.1, y: 0.1, z: 0.1, duration: 0.5 }, delay + 0.5);
                 tl.to(frag.material, { opacity: 0, duration: 0.4 }, delay + 0.6);
-
-                // Spray at absorption
-                tl.add(() => {
-                    this.createSpray(new THREE.Vector3(0.35, 0, 0.62), 10, 0xddccaa, 0.08);
-                }, delay + 0.5);
+                tl.add(() => this.createSpray(A.lensCenter.clone(), 12, 0xddccaa, 0.1), delay + 0.5);
             });
 
-            this.toolExit(tl, 'phaco_probe', { x: 2.5, y: 1, z: 1.5 }, 8.5);
+            this.toolExit(tl, 'phaco_probe', A.exitPoint, 8.5);
 
             steps.push({ timeline: tl, label: "Emulsify & Aspirate", description: "Each lens fragment gets pulled to the probe tip by suction, vibrated into liquid by ultrasound, and sucked out. Watch them dissolve one by one.", icon: "fa-magnet" });
         })();
@@ -803,102 +924,107 @@ class SurgeryAnimations {
        ============================================ */
     buildIOLSubSteps(camera, controls) {
         const steps = [];
+        const A = this.anchors;
         const fade = () => {
             this.eye.setPartOpacity('eyelid', 0.05); this.eye.setPartOpacity('skin', 0.05);
             this.eye.setPartOpacity('cornea', 0.06); this.eye.setPartOpacity('sclera', 0.2);
             this.eye.setPartVisibility('lens', false);
         };
 
-        // Sub 0: IOL injector enters and SQUEEZES IOL through incision
+        // Sub 0: IOL injector enters through incision and squeezes IOL into capsule
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(fade, 0);
-            this.cam(tl, camera, controls, { x: 1.5, y: 1, z: 3 }, { x: 0, y: 0, z: 0.3 });
+            this.camFocus(tl, camera, controls, { x: 1.5, y: 1, z: 3 });
 
             const injector = this.toolEnter(tl, 'iol_injector',
-                { x: 3.5, y: 0.5, z: 1.5 }, { x: 0.8, y: 0.05, z: 0.88 },
+                A.approachStart, A.limbusEntry,
                 { x: Math.PI, y: 0.2, z: Math.PI / 4 }, 0.45
             );
 
-            // Push into incision
-            tl.to(injector.position, { x: 0.35, y: 0, z: 0.75, duration: 1.5, ease: "power1.inOut" }, 2.0);
+            // Push tip into anterior chamber, toward the empty capsular bag (lens position)
+            tl.to(injector.position, { x: A.lensCenter.x, y: A.lensCenter.y, z: A.lensCenter.z + 0.05,
+                duration: 1.5, ease: "power1.inOut" }, 2.0);
 
-            // Plunger pushes
             const plunger = injector.getObjectByName('plunger');
             if (plunger) tl.to(plunger.position, { y: 0.2, duration: 2.5 }, 3.0);
 
-            // IOL EMERGES — starts as tiny folded disc, unfurls
+            // IOL emerges AT the lens position (where the empty capsular bag is)
             const iol = this.eye.getPart('iol');
             tl.add(() => {
                 iol.forEach(m => {
                     m.visible = true;
-                    m.scale.set(0.02, 0.02, 0.02); // Folded tiny
-                    m.position.set(0.3, 0, 0.55);
+                    m.scale.set(0.02, 0.02, 0.02);
+                    m.position.copy(A.lensCenter).add(new THREE.Vector3(0.05, 0, 0));
                 });
             }, 4.0);
 
-            // IOL squeezes out — grows from tiny to small
+            // IOL squeezes out
             iol.forEach(m => {
                 tl.to(m.scale, { x: 0.3, y: 0.3, z: 0.3, duration: 0.8, ease: "power2.out" }, 4.2);
-                tl.to(m.position, { x: 0.2, duration: 0.8 }, 4.2);
+                tl.to(m.position, { x: A.lensCenter.x, duration: 0.8 }, 4.2);
             });
 
-            // Flash as IOL exits cartridge
+            // Flash at IOL position
             tl.add(() => {
-                const f = this.createContactFlash(0.25, 0, 0.55, 0x44aaff);
-                gsap.to(f.scale, { x: 2, y: 2, z: 2, duration: 0.3 });
+                const f = this.createContactFlash(A.lensCenter.x, A.lensCenter.y, A.lensCenter.z, 0x44aaff);
+                gsap.to(f.scale, { x: 2.5, y: 2.5, z: 2.5, duration: 0.3 });
                 gsap.to(f.material, { opacity: 0, duration: 0.5 });
             }, 4.3);
 
-            // IOL UNFOLDS with elastic spring
+            // IOL UNFOLDS with elastic spring AT lens position
             iol.forEach(m => {
                 tl.to(m.scale, { x: 1, y: 1, z: 1, duration: 1.5, ease: "elastic.out(1, 0.3)" }, 5.0);
-                tl.to(m.position, { x: 0.1, duration: 1.5 }, 5.0);
             });
 
-            this.toolExit(tl, 'iol_injector', { x: 3.5, y: 0.5, z: 1.5 }, 5.5);
+            this.toolExit(tl, 'iol_injector', A.exitPoint, 5.5);
 
-            steps.push({ timeline: tl, label: "Inject & Unfold IOL", description: "IOL injector pushes the folded artificial lens through the tiny incision. Watch it squeeze out and SPRING open inside the eye.", icon: "fa-compress-arrows-alt" });
+            steps.push({ timeline: tl, label: "Inject & Unfold IOL", description: "IOL injector enters through the corneal wound, advances to where the lens used to be, and the artificial IOL unfurls inside the empty capsular bag.", icon: "fa-compress-arrows-alt" });
         })();
 
-        // Sub 1: Hook dials IOL into position
+        // Sub 1: Sinskey hook centers IOL on the visual axis
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(fade, 0);
-            this.cam(tl, camera, controls, { x: 0, y: 2.2, z: 2.8 }, { x: 0, y: 0, z: 0.3 });
+            this.camFocus(tl, camera, controls, { x: 0, y: 2, z: 2.8 });
 
-            // IOL starts off-center
             const iol = this.eye.getPart('iol');
+            // IOL starts slightly off-center
+            const offCenter = A.lensCenter.clone().add(new THREE.Vector3(0.1, -0.05, 0.02));
             tl.add(() => {
-                iol.forEach(m => { m.visible = true; m.scale.set(1,1,1); m.position.set(0.12, -0.05, 0.52); m.rotation.set(0, 0, 0.15); });
+                iol.forEach(m => {
+                    m.visible = true; m.scale.set(1, 1, 1);
+                    m.position.copy(offCenter);
+                    m.rotation.set(0, 0, 0.15);
+                });
             }, 0);
 
             const hook = this.toolEnter(tl, 'sinskey_hook',
-                { x: 2, y: 0.3, z: 1.2 }, { x: 0.3, y: -0.1, z: 0.62 },
+                A.approachStart, offCenter,
                 { y: -0.5, z: -Math.PI / 2 }, 0.6
             );
 
-            // Hook pushes IOL — VISIBLE ROTATION into center
+            // Hook dials IOL into the center (visual axis)
             iol.forEach(m => {
-                // Hook contacts IOL and rotates it
                 tl.to(m.rotation, { z: 0, duration: 1.5, ease: "power2.inOut" }, 2.5);
-                tl.to(m.position, { x: 0, y: 0, z: 0.5, duration: 2.0, ease: "power2.inOut" }, 2.5);
+                tl.to(m.position, { x: A.lensCenter.x, y: A.lensCenter.y, z: A.lensCenter.z,
+                    duration: 2.0, ease: "power2.inOut" }, 2.5);
             });
 
-            // Hook tip follows the IOL edge
-            tl.to(hook.position, { x: 0.1, y: 0.05, z: 0.58, duration: 1.5, ease: "power1.inOut" }, 2.5);
-            tl.to(hook.position, { x: -0.05, y: 0, z: 0.55, duration: 1.0, ease: "power1.inOut" }, 4.0);
+            // Hook follows the IOL
+            tl.to(hook.position, { x: A.lensCenter.x + 0.05, y: A.lensCenter.y + 0.05, z: A.lensCenter.z,
+                duration: 1.5, ease: "power1.inOut" }, 2.5);
 
-            // CENTERED flash
+            // CENTERED flash at lens center
             tl.add(() => {
-                const f = this.createContactFlash(0, 0, 0.52, 0x00ff88);
-                gsap.to(f.scale, { x: 3, y: 3, z: 3, duration: 0.4 });
+                const f = this.createContactFlash(A.lensCenter.x, A.lensCenter.y, A.lensCenter.z, 0x00ff88);
+                gsap.to(f.scale, { x: 4, y: 4, z: 4, duration: 0.4 });
                 gsap.to(f.material, { opacity: 0, duration: 0.6 });
             }, 4.5);
 
-            this.toolExit(tl, 'sinskey_hook', { x: 2, y: 0.3, z: 1.2 }, 5.0);
+            this.toolExit(tl, 'sinskey_hook', A.exitPoint, 5.0);
 
-            steps.push({ timeline: tl, label: "Center IOL with Hook", description: "Sinskey hook dials the IOL into the center of the capsular bag. Watch it rotate and lock into perfect position.", icon: "fa-bullseye" });
+            steps.push({ timeline: tl, label: "Center IOL on Visual Axis", description: "Sinskey hook dials the IOL into the geometric center of the lens position. The implant locks onto the visual axis — exactly where the natural lens used to focus light.", icon: "fa-bullseye" });
         })();
 
         this.subStepTimelines = steps;
@@ -910,117 +1036,118 @@ class SurgeryAnimations {
        ============================================ */
     buildClosureSubSteps(camera, controls) {
         const steps = [];
+        const A = this.anchors;
 
         const setupDone = () => {
             this.eye.setPartOpacity('eyelid', 0.1); this.eye.setPartOpacity('skin', 0.1);
             this.eye.setPartVisibility('lens', false);
-            this.eye.getPart('iol').forEach(m => { m.visible = true; m.scale.set(1,1,1); m.position.set(0,0,0.5); });
+            this.eye.getPart('iol').forEach(m => {
+                m.visible = true; m.scale.set(1, 1, 1);
+                m.position.copy(A.lensCenter);
+            });
         };
 
-        // Sub 0: Remove OVD
+        // Sub 0: Aspirate OVD from anterior chamber
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(setupDone, 0);
             this.eye.setPartOpacity('cornea', 0.08);
             this.eye.setPartOpacity('sclera', 0.3);
-            this.cam(tl, camera, controls, { x: 1, y: 1, z: 4 }, { x: 0, y: 0, z: 0.2 });
+            this.camFocus(tl, camera, controls, { x: 1, y: 1, z: 3.5 });
 
             const ia = this.toolEnter(tl, 'ia_handpiece',
-                { x: 2.5, y: 0.5, z: 1.2 }, { x: 0.4, y: 0, z: 0.7 },
+                A.approachStart, A.anteriorChamber,
                 { x: Math.PI, z: Math.PI / 4 }, 0.5
             );
 
-            // Sweep and suck — visible OVD being removed
+            // OVD cloud at the anterior chamber
             const ovdCloud = new THREE.Mesh(
                 new THREE.SphereGeometry(0.3, 16, 16),
-                new THREE.MeshPhysicalMaterial({ color: 0xd0e8ff, transparent: true, opacity: 0.2, transmission: 0.5 })
+                new THREE.MeshPhysicalMaterial({ color: 0xd0e8ff, transparent: true, opacity: 0.25 })
             );
-            ovdCloud.position.set(0, 0, 0.6);
+            ovdCloud.position.copy(A.anteriorChamber);
             this.scene.add(ovdCloud);
             this.dynamicObjects.push(ovdCloud);
 
-            // OVD shrinks as aspirated
+            // OVD shrinks as it's aspirated toward the probe
             tl.to(ovdCloud.scale, { x: 0.1, y: 0.1, z: 0.1, duration: 3.0, ease: "power1.in" }, 2.0);
             tl.to(ovdCloud.material, { opacity: 0, duration: 2.5 }, 2.5);
 
-            // Suction particles moving toward probe
+            // Suction particles around the chamber
             for (let i = 0; i < 5; i++) {
                 tl.add(() => {
-                    this.createSpray(new THREE.Vector3(
-                        (Math.random() - 0.5) * 0.3,
-                        (Math.random() - 0.5) * 0.3,
-                        0.6
-                    ), 5, 0xaaccee, 0.05);
+                    const r = 0.15;
+                    this.createSpray(A.anteriorChamber.clone().add(new THREE.Vector3(
+                        (Math.random() - 0.5) * r, (Math.random() - 0.5) * r, (Math.random() - 0.5) * r
+                    )), 6, 0xaaccee, 0.05);
                 }, 2.5 + i * 0.5);
             }
 
-            this.toolExit(tl, 'ia_handpiece', { x: 2.5, y: 0.5, z: 1.2 }, 5.0);
+            this.toolExit(tl, 'ia_handpiece', A.exitPoint, 5.0);
 
-            steps.push({ timeline: tl, label: "Aspirate Viscoelastic", description: "I/A probe sucks out remaining viscoelastic gel to prevent post-op pressure spike. Watch the gel cloud shrink and disappear.", icon: "fa-exchange-alt" });
+            steps.push({ timeline: tl, label: "Aspirate Viscoelastic", description: "I/A probe enters the anterior chamber and removes all remaining viscoelastic gel to prevent post-op pressure spike.", icon: "fa-exchange-alt" });
         })();
 
-        // Sub 1: Hydrate wound shut
+        // Sub 1: Hydrate corneal wound shut at the limbus
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(setupDone, 0);
-            this.cam(tl, camera, controls, { x: 1.5, y: 0.5, z: 3.5 }, { x: 0.3, y: 0, z: 0.5 });
+            this.camFocus(tl, camera, controls, { x: 1.5, y: 0.3, z: 3.2 });
 
             const cannula = this.toolEnter(tl, 'cannula',
-                { x: 2.5, y: 0.3, z: 1.5 }, { x: 0.6, y: 0, z: 0.92 },
+                A.approachStart, A.limbus,
                 { y: -0.2, z: -Math.PI / 2 }, 0.7
             );
 
-            // Fluid enters wound edges
+            // Hydration flash at the actual incision site (limbus)
             tl.add(() => {
-                const hydro = this.createContactFlash(0.5, 0, 0.9, 0x66bbff);
-                gsap.to(hydro.scale, { x: 3, y: 3, z: 3, duration: 0.5 });
+                const hydro = this.createContactFlash(A.limbus.x, A.limbus.y, A.limbus.z + 0.03, 0x66bbff);
+                gsap.to(hydro.scale, { x: 3.5, y: 3.5, z: 3.5, duration: 0.5 });
                 gsap.to(hydro.material, { opacity: 0, duration: 1.0 });
             }, 2.5);
 
-            // Cornea swells — wound SEALS (opacity increases)
+            // Cornea seals
             this.eye.getPart('cornea').forEach(m => {
                 if (m.material) {
-                    tl.to(m.material, { opacity: 0.2, duration: 0.8 }, 2.5);
+                    tl.to(m.material, { opacity: 0.22, duration: 0.8 }, 2.5);
                     tl.to(m.material, { opacity: 0.15, duration: 1.5 }, 3.5);
                 }
             });
 
-            // Green "sealed" confirmation flash
+            // Green confirmation flash at the wound site
             tl.add(() => {
-                const seal = this.createContactFlash(0.5, 0, 0.9, 0x00ff88);
-                gsap.to(seal.scale, { x: 4, y: 4, z: 4, duration: 0.5 });
+                const seal = this.createContactFlash(A.limbus.x, A.limbus.y, A.limbus.z + 0.03, 0x00ff88);
+                gsap.to(seal.scale, { x: 5, y: 5, z: 5, duration: 0.5 });
                 gsap.to(seal.material, { opacity: 0, duration: 0.8 });
             }, 4.0);
 
-            this.toolExit(tl, 'cannula', { x: 2.5, y: 0.3, z: 1.5 }, 4.5);
+            this.toolExit(tl, 'cannula', A.exitPoint, 4.5);
 
-            steps.push({ timeline: tl, label: "Hydrate & Seal Wound", description: "BSS injected into the wound edges — corneal stroma swells and seals the incision watertight. See the green confirmation flash.", icon: "fa-tint" });
+            steps.push({ timeline: tl, label: "Hydrate & Seal Wound", description: "BSS injected into the wound edges at the temporal limbus. Corneal stroma swells and seals the incision watertight — green flash confirms the seal.", icon: "fa-tint" });
         })();
 
-        // Sub 2: Final view
+        // Sub 2: Final triumphant view
         (() => {
             const tl = gsap.timeline({ paused: true });
             tl.add(setupDone, 0);
 
-            // Restore full eye
             tl.add(() => {
                 this.eye.setPartOpacity('sclera', 1); this.eye.setPartOpacity('cornea', 0.15);
                 this.eye.setPartOpacity('eyelid', 0.7); this.eye.setPartOpacity('skin', 0.7);
             }, 0.5);
 
-            this.cam(tl, camera, controls, { x: 0, y: 0, z: 4.5 }, { x: 0, y: 0, z: 0 });
+            this.camFocus(tl, camera, controls, { x: 0, y: 0, z: 4.5 });
 
-            // Triumphant slow rotation
             tl.to(this.eye.group.rotation, { y: Math.PI * 2, duration: 8, ease: "power1.inOut" }, 1.0);
 
-            // IOL sparkle
+            // IOL sparkle at the lens center
             tl.add(() => {
-                const sparkle = this.createContactFlash(0, 0, 0.55, 0x44aaff);
+                const sparkle = this.createContactFlash(A.lensCenter.x, A.lensCenter.y, A.lensCenter.z, 0x44aaff);
                 gsap.to(sparkle.scale, { x: 6, y: 6, z: 6, duration: 1.0 });
                 gsap.to(sparkle.material, { opacity: 0, duration: 1.5 });
             }, 2.0);
 
-            steps.push({ timeline: tl, label: "Surgery Complete!", description: "The eye is sealed, the new IOL is centered and stable. The patient's cloudy vision will now be crystal clear.", icon: "fa-check-circle" });
+            steps.push({ timeline: tl, label: "Surgery Complete!", description: "The eye is sealed, the new IOL is centered on the visual axis. The patient's cloudy vision will now be crystal clear.", icon: "fa-check-circle" });
         })();
 
         this.subStepTimelines = steps;
