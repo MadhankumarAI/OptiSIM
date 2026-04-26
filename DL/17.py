@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
 from tensorflow.keras.layers import Dense
 
-inits = ['zeros', 'random_normal', 'random_uniform', 'glorot_uniform', 'glorot_normal', 'he_normal']
-fig, axes = plt.subplots(2, 3, figsize=(12, 6))
+inits = ['zeros', 'random_normal', 'random_uniform', 'glorot_uniform', 'glorot_normal', 'he_normal','he_uniform']
+fig, axes = plt.subplots(3, 3, figsize=(12, 6))
 
 for ax, init in zip(axes.flat, inits):
     layer = Dense(100, kernel_initializer=init)
