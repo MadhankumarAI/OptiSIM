@@ -1,12 +1,13 @@
 import numpy as np
+from sklearn.datasets import load_breast_cancer
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Input, LSTM, Dense, RepeatVector, TimeDistributed, Embedding
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 
-np.random.seed(0)
-N, T, V = 1000, 5, 10
-X = np.random.randint(1, V, size=(N, T))
+X_raw, _ = load_breast_cancer(return_X_y=True)
+X = np.clip((X_raw / X_raw.max(axis=0) * 9).astype(int), 0, 9)
 Y = X[:, ::-1]
+T, V = 30, 10
 
 inp = Input(shape=(T,))
 e = Embedding(V, 16)(inp)
@@ -16,12 +17,12 @@ out = TimeDistributed(Dense(V, activation='softmax'))(dec)
 
 m = Model(inp, out)
 m.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-m.fit(X[:800], Y[:800], epochs=20, verbose=0)
+m.fit(X[:450], Y[:450], epochs=20, verbose=0)
 
-pred = m.predict(X[800:], verbose=0).argmax(-1)
+pred = m.predict(X[450:], verbose=0).argmax(-1)
 sm = SmoothingFunction().method1
 scores = [sentence_bleu([list(map(str, r))], list(map(str, p)), smoothing_function=sm)
-          for r, p in zip(Y[800:], pred)]
+          for r, p in zip(Y[450:], pred)]
 print(f'avg BLEU = {np.mean(scores):.4f}')
 
 
