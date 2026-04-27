@@ -9,6 +9,7 @@ print(box)
 gauss = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]]) / 16
 print(gauss)
 
+
 box_blur = convolve2d(img, box, mode='same', boundary='symm')
 gauss_blur = convolve2d(img, gauss, mode='same', boundary='symm')
 
