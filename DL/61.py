@@ -31,7 +31,7 @@ print(f'f1        = {f1_score(true, pred):.4f}')
 
 
 """
-=== Concept: Fine-tuning BERT for Named Entity Recognition ===
+=== Concept: Fine-tuning BERT for Named Entity Recognition ===      learning_rate=2e-5,  
 
 NER (Named Entity Recognition) in one sentence
   Given a sentence, label EACH TOKEN with an entity type (PERSON,
